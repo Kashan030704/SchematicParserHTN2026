@@ -17,8 +17,9 @@
       <div id="nodes" class="nodes"></div>
     </section>
     <form id="run-form">
-      <label for="pdf">Schematic PDF</label>
-      <input id="pdf" name="pdf" type="file" accept="application/pdf,.pdf">
+      <label for="pdf">Schematic PDF, image, or SCH</label>
+      <input id="pdf" name="pdf" type="file" accept="application/pdf,image/jpeg,image/png,image/bmp,image/tiff,.pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.sch" aria-describedby="file-help">
+      <p id="file-help">PDF, JPEG, PNG, BMP, TIFF, or SCH (legacy KiCad / EAGLE XML). One file, up to 16 MiB; PDFs/images up to 8 pages. SCH files use their component data directly.</p>
       <details id="bom-input" hidden>
         <summary>Or paste an existing BOM JSON (no ingestion call)</summary>
         <label for="bom-json">BOM</label>

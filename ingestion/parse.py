@@ -5,6 +5,7 @@ from pathlib import Path
 from jsonschema import Draft7Validator
 
 BOM_SCHEMA = json.loads((Path(__file__).parent / "bom_schema.json").read_text())
+SCHEMATIC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".sch"}
 
 
 def validate_bom(bom):
@@ -24,12 +25,20 @@ def validate_bom(bom):
     return bom
 
 
-def parse_pdf(path, client):
+def parse_schematic(path, client):
     import pymupdf
+    suffix = Path(path).suffix.lower()
+    if suffix not in SCHEMATIC_EXTENSIONS:
+        raise ValueError("Provide a PDF, JPEG, PNG, BMP, TIFF, or SCH schematic")
+    if suffix == ".sch":
+        from ingestion.sch import parse_sch
+        return validate_bom(parse_sch(path))
     images = []
     with pymupdf.open(path) as document:
-        if not document.is_pdf or document.is_encrypted or not 1 <= len(document) <= 8:
-            raise ValueError("Provide an unencrypted schematic PDF with 1–8 pages")
+        if document.is_pdf != (suffix == ".pdf"):
+            raise ValueError("Schematic file contents do not match the file extension")
+        if document.is_encrypted or not 1 <= len(document) <= 8:
+            raise ValueError("Provide an unencrypted schematic with 1–8 pages")
         for page in document:
             # Bound raster dimensions while preserving circuit label legibility.
             scale = min(200 / 72, 2400 / max(page.rect.width, page.rect.height))
@@ -37,6 +46,11 @@ def parse_pdf(path, client):
             encoded = base64.b64encode(pixmap.tobytes("png")).decode("ascii")
             images.append("data:image/png;base64," + encoded)
     return validate_bom(client.extract_bom(images, BOM_SCHEMA))
+
+
+def parse_pdf(path, client):
+    """Compatibility entry point for existing PDF callers."""
+    return parse_schematic(path, client)
 
 
 if __name__ == "__main__":

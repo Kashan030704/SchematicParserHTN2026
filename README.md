@@ -266,6 +266,8 @@ The five-part simulation verifies software behavior. Physical delivery and live 
       PICK COMPONENT
 ```
 
+Supported schematic uploads: PDF, JPEG/JPG, PNG, BMP, TIFF/TIF, and SCH (one file per run, up to 16 MiB; PDFs/images up to eight pages). Images are converted to PNG for vision ingestion. Simulation uses the fixture BOM for PDF/image uploads. `.sch` uploads read component data directly from standalone legacy KiCad or EAGLE XML files, without a vision call. Parts are grouped by reference prefix and exact value; unknown prefixes use type `component`. Hierarchical schematics, binary SCH formats, and other SCH dialects must be exported to PDF/PNG first.
+
 ## Run the simulation
 
 Use Python 3.11+ (verified on Python 3.13). OpenCV contrib includes AprilTag detection; do not also install a conflicting opencv-python package.
