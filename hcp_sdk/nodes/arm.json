@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "device_id": "arm",
+    "freetext_desc": "4-DOF articulated arm on a rotating base (base yaw, shoulder pitch, elbow pitch) with a single-servo parallel gripper; no wrist. Picks one component from a tagged repeatable pickup bin and places it on the conveyor or a named staging zone."
+  },
+  "available_commands": {
+    "pick": {
+      "freetext_desc": "Move to the given AprilTag's calibrated pickup pose, close the gripper, and lift to a safe height. No wrist: grab orientation is fixed by the arm pose; the bin must present one graspable part at the same position after each pick.",
+      "params": [{"tag_id": "int"}]
+    },
+    "place": {
+      "freetext_desc": "Move to the named calibrated zone (e.g. belt or staging), release the part, and retreat clear before reporting done.",
+      "params": [{"zone": "string"}]
+    },
+    "home": {
+      "freetext_desc": "Return the empty arm to its configured home/rest pose.",
+      "params": []
+    }
+  }
+}

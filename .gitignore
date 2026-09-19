@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+out/
+instance/
+config/hardware.json
+firmware/pins.h
+*.egg-info/

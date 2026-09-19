@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "required": ["components"],
+  "properties": {
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "value", "quantity", "refdes"],
+        "properties": {
+          "type": {"type": "string"},
+          "value": {"type": "string"},
+          "quantity": {"type": "integer"},
+          "refdes": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

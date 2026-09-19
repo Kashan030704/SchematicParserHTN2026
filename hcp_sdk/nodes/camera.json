@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "device_id": "camera",
+    "freetext_desc": "Overhead bench camera. Detects AprilTags and reports each tag id with its world-frame pose (x, y, theta), in meters and radians."
+  },
+  "available_commands": {
+    "get_tags": {
+      "freetext_desc": "Return the currently visible AprilTags with their world poses.",
+      "params": []
+    }
+  }
+}
