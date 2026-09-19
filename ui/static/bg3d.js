@@ -41,11 +41,94 @@
   const boardGroup = new THREE.Group();
   scene.add(boardGroup);
 
+  // Silkscreen + solder-mask detail baked into a canvas texture, so the bare
+  // green board reads as a real PCB (labels, grid dots, ref-des text) instead
+  // of a flat slab.
+  function boardSurfaceTexture() {
+    const w = 1408, h = 832;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#1f5c46';
+    ctx.fillRect(0, 0, w, h);
+    // subtle solder-mask sheen banding
+    const sheen = ctx.createLinearGradient(0, 0, w, h);
+    sheen.addColorStop(0, 'rgba(255,255,255,0.05)');
+    sheen.addColorStop(0.5, 'rgba(255,255,255,0)');
+    sheen.addColorStop(1, 'rgba(0,0,0,0.08)');
+    ctx.fillStyle = sheen;
+    ctx.fillRect(0, 0, w, h);
+    // fabrication dot grid
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    for (let gx = 24; gx < w; gx += 48) {
+      for (let gy = 24; gy < h; gy += 48) {
+        ctx.beginPath();
+        ctx.arc(gx, gy, 1.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // silkscreen outlines + refdes labels
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.font = '20px monospace';
+    ctx.lineWidth = 1.5;
+    const labels = [
+      { x: 120, y: 140, w: 90, h: 90, text: 'R1' },
+      { x: 260, y: 620, w: 90, h: 90, text: 'R2' },
+      { x: 980, y: 150, w: 100, h: 60, text: 'C1' },
+      { x: 1040, y: 640, w: 100, h: 60, text: 'C2' },
+      { x: 560, y: 120, w: 220, h: 90, text: 'U1' },
+      { x: 560, y: 600, w: 220, h: 90, text: 'U2' },
+    ];
+    labels.forEach(({ x, y, w: bw, h: bh, text }) => {
+      ctx.strokeRect(x - bw / 2, y - bh / 2, bw, bh);
+      ctx.fillText(text, x - bw / 2, y - bh / 2 - 8);
+    });
+    // silkscreen title text
+    ctx.font = 'bold 34px monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText('SCHEMATIC-TO-FETCH · REV A', w / 2 - 260, h - 36);
+    // polarity marks + a mini "logo" crest
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, 46, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 22, h / 2);
+    ctx.lineTo(w / 2 + 22, h / 2);
+    ctx.moveTo(w / 2, h / 2 - 22);
+    ctx.lineTo(w / 2, h / 2 + 22);
+    ctx.stroke();
+    const tex = new THREE.CanvasTexture(c);
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
   const board = new THREE.Mesh(
     new THREE.BoxGeometry(11, 0.12, 6.4),
-    new THREE.MeshStandardMaterial({ color: 0x1f5c46, roughness: 0.65, metalness: 0.1 })
+    new THREE.MeshStandardMaterial({ map: boardSurfaceTexture(), roughness: 0.55, metalness: 0.15 })
   );
   boardGroup.add(board);
+
+  // Plated mounting holes near each corner.
+  [[-5.2, -2.8], [5.2, -2.8], [-5.2, 2.8], [5.2, 2.8]].forEach(([x, z]) => {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.16, 0.03, 10, 20),
+      new THREE.MeshStandardMaterial({ color: 0xcfcfcf, metalness: 0.85, roughness: 0.25 })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(x, 0.07, z);
+    boardGroup.add(ring);
+  });
+
+  // Copper vias scattered across the board for that populated-PCB look.
+  const viaMaterial = new THREE.MeshStandardMaterial({ color: 0xd8b25c, metalness: 0.75, roughness: 0.3 });
+  for (let i = 0; i < 46; i++) {
+    const via = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.02, 8), viaMaterial);
+    via.position.set((Math.random() - 0.5) * 10, 0.065, (Math.random() - 0.5) * 6);
+    boardGroup.add(via);
+  }
 
   function addTrace(x, z, length, rotationY) {
     const trace = new THREE.Mesh(
@@ -60,6 +143,31 @@
     addTrace(i * 1.3, 2.2, 3.6, 0);
     addTrace(i * 1.3 + 0.5, -2.2, 2.8, Math.PI / 2);
   }
+  // Finer secondary traces + right-angle "stair-step" routing for density.
+  for (let i = -3; i <= 3; i++) {
+    addTrace(i * 0.9, 0.3, 0.9, Math.PI / 2);
+  }
+  addTrace(-1.6, 1.0, 1.8, 0.12);
+  addTrace(1.9, -0.6, 2.0, -0.1);
+  addTrace(0, 0, 1.2, Math.PI / 2);
+
+  // Pin-header connector along the back edge, a common real-PCB detail.
+  const headerGroup = new THREE.Group();
+  const headerBase = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 0.16, 0.3),
+    new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.5 })
+  );
+  headerGroup.add(headerBase);
+  for (let i = 0; i < 8; i++) {
+    const pin = new THREE.Mesh(
+      new THREE.BoxGeometry(0.05, 0.28, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0xc9c9c9, metalness: 0.85, roughness: 0.2 })
+    );
+    pin.position.set(-1.05 + i * 0.3, 0.08, 0);
+    headerGroup.add(pin);
+  }
+  headerGroup.position.set(-3, 0.14, -2.9);
+  boardGroup.add(headerGroup);
 
   function resistor(x, z, rotationY, bodyColor) {
     const group = new THREE.Group();
@@ -139,7 +247,45 @@
     boardGroup.add(group);
   }
 
-  resistor(-4.2, 1.7, 0, 0xdcb877);
+  // A small onboard LED (dome + flat-side marker + two leads) for realism.
+  function led(x, z, color) {
+    const group = new THREE.Group();
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(0.11, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.62),
+      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.6, transparent: true, opacity: 0.85, roughness: 0.25 })
+    );
+    group.add(dome);
+    [-0.05, 0.05].forEach(legX => {
+      const lg = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6),
+        new THREE.MeshStandardMaterial({ color: 0xb0b0b0, metalness: 0.75 })
+      );
+      lg.position.set(legX, -0.14, 0);
+      group.add(lg);
+    });
+    group.position.set(x, 0.18, z);
+    boardGroup.add(group);
+  }
+
+  // A tiny slide switch, adding another distinct silhouette to the layout.
+  function switchToggle(x, z) {
+    const group = new THREE.Group();
+    const base = new THREE.Mesh(
+      new THREE.BoxGeometry(0.36, 0.12, 0.22),
+      new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.55 })
+    );
+    group.add(base);
+    const lever = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, 0.05, 0.12),
+      new THREE.MeshStandardMaterial({ color: 0xe4e4e4, roughness: 0.4 })
+    );
+    lever.position.set(0.06, 0.09, 0);
+    group.add(lever);
+    group.position.set(x, 0.2, z);
+    boardGroup.add(group);
+  }
+
+
   resistor(-3.8, -1.6, Math.PI / 2, 0xdcb877);
   resistor(0.6, -1.8, Math.PI / 2, 0xdcb877);
   resistor(4.1, 1.2, Math.PI / 6, 0xe0c9a0);
@@ -149,6 +295,9 @@
   capacitor(-2.6, 0.2);
   chip(-2.1, -1.1);
   chip(1.8, 1.9);
+  led(3.4, 0.1, 0xe0554a);
+  led(-4.6, -0.6, 0x4ac9e0);
+  switchToggle(3.2, 2.4);
 
   boardGroup.rotation.x = -0.55;
   boardGroup.position.y = -0.6;
