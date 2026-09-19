@@ -6,8 +6,7 @@ import time
 import pytest
 
 from hcp_host.envelope import FrameParser, ProtocolError, frame, message
-from hcp_sdk.loader import load_client
-from tests.conftest import eventually
+from tests.conftest import eventually, load_client
 
 
 def test_framing_concatenated_split_remainder_and_utf8():

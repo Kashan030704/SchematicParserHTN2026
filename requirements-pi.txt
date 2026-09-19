@@ -1,0 +1,6 @@
+# Pi: plaintext SDK socket + H.264 decode; no legacy DJI Python package needed.
+Flask>=3.1,<4
+PyYAML>=6.0.2,<7
+numpy>=1.26,<3
+opencv-contrib-python-headless>=4.10,<5
+av>=14,<17

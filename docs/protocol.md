@@ -1,40 +1,116 @@
-# P0 interfaces
+# HCP HTTP contract — RoboMaster + conveyor
 
-Every HCP message contains exactly `action`, `id`, `device_id`, and object `payload`, followed by newline. Commands/discovery/lifecycle require nonempty IDs; publications/status may use an empty ID. Malformed frames close the connection. Reconnection starts fresh discovery and never replays physical commands.
+This is the current actuator contract. The earlier NDJSON discovery/ack/done code is retained
+only as a regression-tested reference library; no generated TCP clients are deployed here.
 
-| Direction | Action | Payload / behavior |
-| --- | --- | --- |
-| Host → node | `REQUEST_HCP_DATA` | `{}` with fresh ID |
-| Node → host | `REQUEST_HCP_DATA` | Full definition, same ID, node identity |
-| Host → node | Declared command | Typed parameters; device_id identifies target |
-| Node → host | `ack` | `{}`; receipt only |
-| Node → host | `done` | `{"status":"ok","result":...}` or `{"status":"error","error":"..."}` |
-| Camera → host → consumers | `publish` | `{"topic":"context/tags","tags":[{"id":3,"x":0.12,"y":-0.05,"theta":1.57}]}` |
-| Ingestion → host context | `publish` | `{"topic":"context/bom","bom":{"components":[...]}}` |
-| Node → host | `status/health` | State and diagnostics |
+## Payloads
 
-Identity is tied to the registered connection; concurrent duplicate device IDs are rejected. Replies match pending ID and connection. Nodes suppress duplicate command IDs in a bounded session cache; this does not guarantee exactly-once execution across physical/network failures. Uncertain completion ends the run.
+BOM, proposed by Baseten then editable by the human:
 
-`HCPHost.command(device_id, action, payload, timeout)` returns a Future carrying `command_id`; it resolves with the done payload. Registry/context snapshots are copies. In-process context publication/subscriptions connect integrated modules; camera snapshots also reach arm nodes over HCP. Maximum pose age defaults to one second.
+```json
+{"R3":2,"C1":1,"LED_RX":3}
+```
 
-## Arduino serial
+Counts are parts requested for display. Execute once per unique key, not per count.
+No silently skipped unknown mappings: the confirm gate rejects types absent from tag_map.yaml.
+A known type missing from the current image is reported and skipped.
 
-ASCII, one command per newline. One Python reader, one write lock and one sequence-to-response map are shared by both actuator nodes.
+Pi GET /detect:
 
-| Line | Meaning |
-| --- | --- |
-| `C,id,neutral_us,forward_us,max_belt_ms` | Configure belt and enable neutral PWM |
-| `J,id,base_deg,shoulder_deg,elbow_deg,gripper_deg,move_ms,settle_ms` | Move all joints, then settle |
-| `B,id,duration_ms` | Timed belt advance |
-| `S,id` | Stop belt; active advance returns an error |
-| `X,id` | Stop belt and cancel joint interpolation while holding targets |
-| `H` | Heartbeat |
-| `DONE,id` / `ERR,id,reason` | Completion / error |
+```json
+{"ts":1750000000,"rollup":{"R3":{"count":2,"present":true},"LED_RX":{"count":1,"present":true}}}
+```
 
-Firmware rejects overlapping arm/belt motion, malformed numeric commands, oversized lines, and motion before configuration. Local timers and watchdog run without waiting for the LLM. HCP done follows firmware completion, including settling and retreat; it provides no encoder/grip feedback.
+Only detected tags appear. count is visible tags/cups, NOT inventory inside the cup.
+This GET never moves the robot. It requires the observe state and exclusive access;
+a request during motion returns 409, away from observe returns 412.
+A camera failure is an error, not an empty successful detection.
 
-## BOM and inventory
+Detection also includes `frame` and `tags` for the executor/diagnostic preview:
 
-The supplied schema is unchanged. Additional checks require positive quantities, nonempty type/value, distinct refdes, and quantity matching refdes count. Matching uses exact strings. Each component/tag has one bin mapping; repeated units reuse it. There is no unit normalization, substitution, stock count, or depletion sensing.
+```json
+{"frame":{"seq":42,"width":640,"height":360,"captured_monotonic":12345.0},
+ "tags":[{"id":0,"center_px":[320,180],"side_px":80,
+          "corners_px":[[280,140],[360,140],[360,220],[280,220]]}]}
+```
 
-The ledger tracks refdes. Unmatched inventory is warned/skipped and ends incomplete; hardware/model failure ends failed with completed deliveries retained. Complete requires all requested units to finish pick/place/conveyor.
+These fields accompany, not replace, `ts` and `rollup`. `captured_monotonic` is the
+Pi decoder's local timestamp; never compare it to the Mac's clock. Pixel features
+are not metric poses. The HTTP preview remains read-only; the Pi executor takes
+fresh observations between its bounded terminal-approach movements internally.
+
+## Execution sequence
+
+The Mac freezes an approved BOM, generates a fresh run_id, and performs:
+
+1. Pi POST /begin {"run_id":"r1","types":["R3","C1"]} -> {"ok":true,...}. No movement.
+2. For each approved type:
+   - Pi GET /detect. If absent, report missing and continue with the next type.
+   - Pi POST /grasp_place {"run_id":"r1","type":"R3"}. Wait for:
+     {"ok":true,"type":"R3","steps":[{"op":"grasp","ok":true},{"op":"drive","ok":true},{"op":"drop","ok":true}],...}
+   - Arduino POST /advance {"seconds":3}. Wait for {"ok":true} AFTER motor OFF.
+   - Pi POST /return {"run_id":"r1","type":"R3"}. Wait for return + observe step acknowledgements.
+3. Pi POST /end {"run_id":"r1"} -> {"ok":true}.
+
+The Pi never contacts the Arduino. /grasp_place returns at the conveyor, not at home.
+The Mac advances the belt only after the full successful drop log, even in simulation.
+The `grasp` operation internally performs coarse translation, fresh-image terminal
+alignment, scripted grip, then retraces successful approach translations. Top-level
+plan operations and request bodies are unchanged. The result additionally includes
+`approach` with the selected tag ID, alignment trace, frame count and commanded travel.
+run_id is the additional authorization/correlation field needed to enforce approval,
+exclude overlapping runs and reject repeat attempts. It is not a physical verification.
+
+## Errors and stops
+
+- All node operations return JSON; non-2xx, malformed JSON/log, timeout or explicit failure halts.
+- Nodes must not accept overlapping motion/advance. Detection and motion are mutually exclusive.
+- Motion IDs are never replayed or automatically retried.
+- On failure or operator stop: Pi POST /estop {}; Arduino POST /stop {}, dispatched concurrently.
+- Stop is latched until local inspection/restart. A new approval does not clear it.
+- Pi quits its SDK connection instead of making uncertain recovery/home movements.
+- A transport error may mean an action happened but its reply was lost. Do not assume nothing moved.
+- Network/SDK acknowledgements do not verify physical arrival, pickup, drop or belt delivery.
+- Safety is best effort over LAN, not a certified emergency-stop circuit.
+
+## Mac browser API
+
+- GET / -> UI; embeds a per-process anti-CSRF token.
+- GET /status, GET /detect -> state and no-motion preview.
+- POST /proposals multipart schematic=<PDF/PNG/JPEG> -> one real Baseten call, awaiting_confirmation.
+- POST /proposals {"bom":{"R3":2}} -> explicit manual proposal for API testing; same approval gate.
+- POST /proposals/<id>/approve {"approved":true,"bom":{"R3":2}} -> 202, starts once.
+- GET /proposals/<id> -> progress/result. States: awaiting_confirmation, running, complete,
+  complete_with_missing, halted.
+- POST /stop -> requests both node stops.
+
+Every browser POST requires X-HCP-UI-Token from the page. Run history is in-memory,
+bounded to 50 records; restarting the UI does not resume any run.
+
+## Security and deployment
+
+Pi hardware mode requires Authorization: Bearer <HCP_NODE_TOKEN> (24+ characters).
+The conveyor firmware must enforce the same header. Never commit the shared token or Baseten key.
+Mac UI binds loopback; Pi defaults loopback too and requires explicit --bind for LAN access.
+Use a trusted LAN/firewall; HTTP alone does not encrypt tokens. There is no public-internet deployment.
+
+Arduino board, driver, pins, networking library, and firmware are pending hardware confirmation.
+Only a Python HTTP conveyor simulator currently exists; see firmware/README.md.
+
+## Image-based approach boundary
+
+The updated executor uses camera feedback for terminal alignment only. It does not
+ask the LLM to replan, change the selected type/tag, estimate a metric tag pose or
+use camera intrinsic/extrinsic calibration. Coarse travel, scripted grip, approach
+retrace, belt drop and return are still commanded open-loop motions.
+
+The target is a taught pixel center/apparent size. Short lateral/forward steps
+minimize horizontal/size errors; vertical alignment gates completion. Require
+multiple fresh aligned frames, fixed heading, consistent tag/cup geometry and
+verified control directions. Repeated/stale/lost/duplicate tags, poor geometry,
+non-improvement, time/travel/step exhaustion or SDK errors halt without gripping.
+No blind search, alternative tag selection or automatic recovery is included.
+
+After a successful grip, retracing the commanded approach establishes only an
+estimated return to observe; it is not localization and cannot eliminate drift.
+The controller still advances the belt on a successful commanded drop, not a sensor.

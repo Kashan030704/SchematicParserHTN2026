@@ -1,221 +1,190 @@
+"""Mac confirmation gate. Ingestion and preview can NEVER dispatch motion."""
 import argparse
-import atexit
+import copy
+import hmac
 import json
-import logging
 import os
 from pathlib import Path
+import secrets
+import signal
+import tempfile
+import threading
 import uuid
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
+from werkzeug.exceptions import BadRequest, Conflict
 
-from config import ROOT, load_hardware
-from orchestrator.runs import RunManager
+from config import load_yaml, load_tag_map
+from ingestion.parse import validate_bom, strict_json
+from orchestrator.ingest import ingest
+from orchestrator.controller import Controller
+from orchestrator.nodes import NodeClient
+from orchestrator.baseten_client import BasetenClient
 
 
-def create_app(host=None, model=None, config=None, inventory=None, instance_path=None,
-               simulation=None, ingestion_model=None, palette_backend=None):
-    app = Flask(__name__, instance_path=str(Path(instance_path or ROOT / "instance").resolve()))
+def create_app(controller, *, model_factory=BasetenClient, part_types=()):
+    app = Flask(__name__, static_folder="static")
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
-    Path(app.instance_path).mkdir(parents=True, exist_ok=True)
-    if palette_backend is None:
-        from orchestrator.loop import Orchestrator
-        inventory = inventory if inventory is not None else json.loads((ROOT / "bench_inventory.json").read_text())
-        orchestrator = Orchestrator(host, model, inventory, config["belt"]["delivery_duration_s"], config["camera"]["max_pose_age_s"], ingestion_model=ingestion_model)
-        ingestion_mode = "live" if simulation is None or (ingestion_model is not None and ingestion_model is not model) else "fixture"
-        metadata = {"backend": "hcp", "ingestion": ingestion_mode}
-        demo_pdf = simulation.pdf if simulation is not None else None
-    else:
-        orchestrator = palette_backend
-        metadata = palette_backend.metadata
-        demo_pdf = palette_backend.demo_pdf
-    simulated = metadata.get("hardware") == "simulated" if palette_backend is not None else simulation is not None
-    manager = RunManager(orchestrator, metadata)
-    app.extensions["runs"] = manager
-    app.extensions["hcp"] = host
+    app.config["UI_TOKEN"] = secrets.token_urlsafe(32)
+    runs, lock = {}, threading.Lock()
+    known = set(part_types)
+
+    @app.before_request
+    def csrf():
+        if request.method == "POST" and not hmac.compare_digest(
+                request.headers.get("X-HCP-UI-Token", ""), app.config["UI_TOKEN"]):
+            return jsonify(error="Missing UI approval token; reload this page"), 403
+
+    @app.after_request
+    def headers(response):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'"
+        return response
 
     @app.get("/")
     def index():
-        return app.send_static_file("index.html")
+        text = (Path(app.static_folder) / "index.html").read_text()
+        return text.replace("{{UI_TOKEN}}", app.config["UI_TOKEN"])
 
-    @app.get("/api/status")
+    @app.get("/status")
     def status():
-        with manager.lock:
-            active_run = manager.active
-        if palette_backend is not None:
-            node_status = (palette_backend.status() if hasattr(palette_backend, "status") else
-                           {"nodes": {}, "health": {}, "ready": True, "required_nodes": []})
-            return jsonify(**metadata, **node_status, simulation=simulated,
-                           demo_available=demo_pdf is not None, accepts_bom=True, active_run=active_run)
-        with host.lock:
-            health = dict(host.health)
-        nodes = host.registry.snapshot()
-        required = ["arm", "conveyor", "camera"]
-        return jsonify(**metadata, nodes=nodes, health=health, simulation=simulated, active_run=active_run,
-                       ready=all(n in nodes for n in required), required_nodes=required,
-                       demo_available=demo_pdf is not None, accepts_bom=False)
+        return jsonify(architecture="RoboMaster + conveyor HTTP", types=sorted(known),
+                       stopped=controller.cancelled.is_set(), physical_delivery_verified=False)
 
-    @app.get("/demo.pdf")
-    def demo():
-        if demo_pdf is None:
-            return jsonify(error="Demo PDF is available only in simulation"), 404
-        return send_from_directory(str(demo_pdf.parent), demo_pdf.name)
+    def preview():
+        value = controller.pi.get("/detect")
+        controller._validate_detection(value)
+        return value
 
-    @app.post("/api/runs")
-    def run():
+    @app.get("/detect")
+    def detect():
+        return jsonify(preview())
+
+    @app.post("/proposals")
+    def propose():
+        with lock:
+            if any(r["state"] == "running" for r in runs.values()):
+                raise Conflict("A run is active")
         if request.is_json:
-            if palette_backend is None:
-                return jsonify(error="JSON BOM submissions require camera-free mode"), 400
-            body = request.get_json(silent=True)
-            if not isinstance(body, dict) or set(body) != {"bom"} or not isinstance(body["bom"], dict):
-                return jsonify(error='Send JSON {"bom": {"components": [...]}}'), 400
-            try:
-                run_id = manager.submit_bom(body["bom"], simulation=simulated)
-            except RuntimeError as exc:
-                return jsonify(error=str(exc)), 409
-            return jsonify(id=run_id, state="queued"), 202
-        upload = request.files.get("pdf")
-        if upload is None:
-            if demo_pdf is None:
-                return jsonify(error="Upload a schematic PDF"), 400
-            path = demo_pdf
+            data = strict_json(request.get_data(as_text=True))
+            if not isinstance(data, dict) or set(data) != {"bom"}:
+                raise BadRequest("Manual proposal requires only a bom object")
+            bom, source = validate_bom(data["bom"]), "manual"
         else:
-            if not upload.filename or not upload.filename.lower().endswith(".pdf"):
-                return jsonify(error="Upload a .pdf file"), 400
-            path = Path(app.instance_path) / f"{uuid.uuid4().hex}.pdf"
-            upload.save(path)
+            upload = request.files.get("schematic")
+            if not upload:
+                raise BadRequest("Upload a schematic PDF, PNG or JPEG")
+            suffix = Path(upload.filename or "").suffix.lower()
+            if suffix not in (".pdf", ".png", ".jpg", ".jpeg"):
+                raise BadRequest("Supported schematic formats: PDF, PNG, JPEG")
+            with tempfile.TemporaryDirectory(prefix="hcp-ingest-") as folder:
+                path = Path(folder) / ("schematic" + suffix)
+                upload.save(path)
+                bom = ingest(path, model_factory(), part_types=sorted(known))
+            source = "baseten"
         try:
-            run_id = manager.submit(path, simulation=simulated)
-        except RuntimeError as exc:
-            if upload is not None:
-                path.unlink(missing_ok=True)
-            return jsonify(error=str(exc)), 409
-        return jsonify(id=run_id, state="queued"), 202
+            detection, detection_error = preview(), None
+        except Exception as exc:
+            detection, detection_error = None, str(exc)
+        proposal_id = uuid.uuid4().hex
+        run = {"id": proposal_id, "state": "awaiting_confirmation", "bom": bom, "source": source,
+               "detection": detection, "detection_error": detection_error, "events": [],
+               "physical_delivery_verified": False}
+        with lock:
+            # Bound in-memory history; never evict a running record.
+            if len(runs) >= 50:
+                oldest = next((key for key, item in runs.items() if item["state"] != "running"), None)
+                if oldest:
+                    del runs[oldest]
+            runs[proposal_id] = run
+        return jsonify(copy.deepcopy(run)), 201
 
-    @app.get("/api/runs/<run_id>")
-    def run_status(run_id):
+    def execute(proposal_id, bom):
+        def progress(event):
+            with lock:
+                runs[proposal_id]["events"].append(event)
         try:
-            return jsonify(manager.get(run_id))
-        except KeyError:
-            return jsonify(error="Unknown run"), 404
+            result = controller.run(bom, approved=True, progress=progress)
+            with lock:
+                runs[proposal_id].update(result)
+        except BaseException as exc:
+            with lock:
+                runs[proposal_id].update(state="halted", error=str(exc),
+                                         stop_errors=controller.last_stop_errors)
 
-    @app.errorhandler(413)
-    def too_large(error):
-        return jsonify(error="Request exceeds the 16 MiB upload limit"), 413
+    @app.post("/proposals/<proposal_id>/approve")
+    def approve(proposal_id):
+        data = strict_json(request.get_data(as_text=True))
+        if not isinstance(data, dict) or set(data) != {"bom", "approved"} or data["approved"] is not True:
+            raise BadRequest("Approval requires edited bom and approved: true")
+        bom = validate_bom(data["bom"])
+        missing = sorted(set(bom) - known)
+        if missing:
+            raise BadRequest("No tag/preset mapping for: " + ", ".join(missing))
+        with lock:
+            if proposal_id not in runs:
+                raise BadRequest("Unknown proposal")
+            if controller.cancelled.is_set():
+                raise Conflict("Stopped session: inspect hardware and restart all processes")
+            if runs[proposal_id]["state"] != "awaiting_confirmation":
+                raise Conflict("Proposal already used; approval cannot replay a run")
+            if any(r["state"] == "running" for r in runs.values()):
+                raise Conflict("A run is active")
+            runs[proposal_id].update(state="running", bom=dict(bom))
+            threading.Thread(target=execute, args=(proposal_id, dict(bom)), daemon=True).start()
+        return jsonify(id=proposal_id, state="running"), 202
+
+    @app.get("/proposals/<proposal_id>")
+    def get_run(proposal_id):
+        with lock:
+            if proposal_id not in runs:
+                return jsonify(error="Unknown proposal"), 404
+            return jsonify(copy.deepcopy(runs[proposal_id]))
+
+    @app.post("/stop")
+    def stop():
+        errors = controller.stop()
+        return jsonify(ok=not errors, errors=errors, physical_stop_verified=False), 502 if errors else 200
+
+    @app.errorhandler(Exception)
+    def error(exc):
+        from werkzeug.exceptions import HTTPException
+        from jsonschema import ValidationError
+        if isinstance(exc, HTTPException):
+            return jsonify(error=exc.description), exc.code
+        if isinstance(exc, (ValueError, ValidationError)):
+            return jsonify(error=str(exc)), 400
+        return jsonify(error=str(exc)), 502
 
     return app
 
 
-def create_palette_app(*, palette_path=None, config_path=None, live_ingestion=False,
-                       ingestion_model=None, instance_path=None):
-    """Always SimDriver: no public factory/HTTP option can enable real motors."""
-    from config.so100 import load_config
-    from orchestrator.fixtures import FixtureIngestionModel, create_demo_pdf
-    from orchestrator.palette_backend import PaletteBackend
-    from palette import load_palette
-
-    config = load_config(config_path)
-    palette = load_palette(palette_path or ROOT / "palette.yaml", config)
-    directory = Path(instance_path or ROOT / "instance/palette-simulation").resolve()
-    directory.mkdir(parents=True, exist_ok=True)
-    if ingestion_model is None:
-        if live_ingestion:
-            from orchestrator.baseten_client import BasetenClient
-            ingestion_model = BasetenClient()
-        else:
-            ingestion_model = FixtureIngestionModel()
-    demo_pdf = None if live_ingestion else create_demo_pdf(directory / "demo")
-    backend = PaletteBackend(palette, config, ingestion_model, live_ingestion=live_ingestion, demo_pdf=demo_pdf)
-    return create_app(instance_path=directory, palette_backend=backend)
-
-
-def create_remote_palette_app(host, *, palette_path=None, config_path=None, live_ingestion=False,
-                              allow_hardware=False, ingestion_model=None, instance_path=None):
-    """Explicit opt-in HCP transport; physical mode also requires arming on the Pi."""
-    from config.so100 import load_config
-    from orchestrator.fixtures import FixtureIngestionModel, create_demo_pdf
-    from orchestrator.remote_palette import RemotePaletteBackend
-    from palette import load_palette
-
-    config = load_config(config_path)
-    palette = load_palette(palette_path or ROOT / "palette.yaml", config)
-    directory = Path(instance_path or ROOT / "instance/palette-hcp").resolve()
-    directory.mkdir(parents=True, exist_ok=True)
-    if ingestion_model is None:
-        if live_ingestion:
-            from orchestrator.baseten_client import BasetenClient
-            ingestion_model = BasetenClient()
-        else:
-            ingestion_model = FixtureIngestionModel()
-    demo_pdf = None if live_ingestion or allow_hardware else create_demo_pdf(directory / "demo")
-    backend = RemotePaletteBackend(host, palette, config, ingestion_model, allow_hardware=allow_hardware,
-                                   live_ingestion=live_ingestion, demo_pdf=demo_pdf)
-    return create_app(host=host, instance_path=directory, palette_backend=backend)
-
-
 def main():
-    parser = argparse.ArgumentParser()
-    modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--simulate", action="store_true", help="Legacy HCP camera/arm/conveyor simulation")
-    modes.add_argument("--camera-free", action="store_true", help="Fixed palette + SimDriver, no camera/conveyor/HCP/I2C")
-    modes.add_argument("--palette-hcp", action="store_true", help="Fixed palette over HCP TCP; launch arm.hcp_node separately")
-    parser.add_argument("--allow-hardware", action="store_true", help="Only with --palette-hcp: permit a locally armed physical node")
-    parser.add_argument("--live-ingestion", action="store_true", help="Use existing Baseten PDF→BOM instead of fixture ingestion")
-    parser.add_argument("--palette", default=str(ROOT / "palette.yaml"), help="Camera-free palette YAML")
-    parser.add_argument("--arm-config", help="Camera-free PWM limits config (does not itself enable hardware)")
-    parser.add_argument("--config", default=os.getenv("HARDWARE_CONFIG", str(ROOT / "config/hardware.json")))
-    parser.add_argument("--hcp-bind", help="HCP listener address; palette/simulation defaults to loopback")
-    parser.add_argument("--hcp-port", type=int, default=int(os.getenv("HCP_PORT", "9000")))
-    parser.add_argument("--web-bind", default="127.0.0.1")
-    parser.add_argument("--web-port", type=int, default=5000)
+    parser = argparse.ArgumentParser(description="Mac HCP confirm gate and one-shot controller")
+    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--web-port", type=int, default=5002)
     args = parser.parse_args()
-    if args.allow_hardware and not args.palette_hcp:
-        parser.error("--allow-hardware requires --palette-hcp; --camera-free always stays simulated")
-    if args.hcp_bind is None:
-        args.hcp_bind = "127.0.0.1" if args.palette_hcp or args.simulate else "0.0.0.0"
-    logging.basicConfig(level=logging.INFO)
-    if args.camera_free:
-        app = create_palette_app(palette_path=args.palette, config_path=args.arm_config,
-                                 live_ingestion=args.live_ingestion)
-        app.run(host=args.web_bind, port=args.web_port, threaded=True, debug=False, use_reloader=False)
-        return
-    if args.palette_hcp:
-        from hcp_host.server import HCPHost
-        host = HCPHost(args.hcp_bind, args.hcp_port).start()
-        try:
-            app = create_remote_palette_app(host, palette_path=args.palette, config_path=args.arm_config,
-                                            live_ingestion=args.live_ingestion, allow_hardware=args.allow_hardware)
-            app.run(host=args.web_bind, port=args.web_port, threaded=True, debug=False, use_reloader=False)
-        finally:
-            host.stop()
-        return
-    simulation = None
-    if args.simulate:
-        from orchestrator.simulation import FixtureModel, Simulation, simulation_config
-        model, config = FixtureModel(), simulation_config()
-        ingestion_model = model
-        if args.live_ingestion:
-            from orchestrator.baseten_client import BasetenClient
-            ingestion_model = BasetenClient()
-        if args.hcp_bind == "0.0.0.0":
-            args.hcp_bind = "127.0.0.1"
-    else:
-        from actuator.kinematics import Kinematics
-        from orchestrator.baseten_client import BasetenClient
-        from vision.camera_node import TagDetector
-        config = load_hardware(args.config)
-        Kinematics(config["arm"])
-        TagDetector(config["camera"])
-        model = BasetenClient()
-        ingestion_model = model
-    timeout = max(30, 4 * (config["arm"]["move_ms"] + config["arm"]["settle_ms"]) / 1000 + 10, config["belt"]["max_duration_s"] + 5)
-    from hcp_host.server import HCPHost
-    host = HCPHost(args.hcp_bind, args.hcp_port, command_timeout=timeout).start()
-    atexit.register(host.stop)
-    if args.simulate:
-        simulation = Simulation(host, ROOT / "instance/simulation")
-        atexit.register(simulation.stop)
-    app = create_app(host, model, config, simulation=simulation, ingestion_model=ingestion_model)
-    app.run(host=args.web_bind, port=args.web_port, threaded=True, debug=False, use_reloader=False)
+    config_path = Path(args.config)
+    config = load_yaml(config_path)
+    tags = load_tag_map(config_path.parent / config.get("tag_map", "tag_map.yaml"))
+    token = os.getenv(config.get("node_token_env", "HCP_NODE_TOKEN"))
+    controller = Controller(NodeClient(config["pi"]["base_url"], token=token),
+                            NodeClient(config["arduino"]["base_url"], token=token),
+                            advance_seconds=config["arduino"].get("advance_seconds", 3))
+    baseten = config.get("baseten", {})
+    def model():
+        return BasetenClient(vision_model=baseten.get("model"), base_url=baseten.get("url"),
+                             api_key_env=baseten.get("api_key_env", "BASETEN_API_KEY"))
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGINT, interrupted)
+    signal.signal(signal.SIGTERM, interrupted)
+    try:
+        create_app(controller, model_factory=model, part_types=tags.values()).run(
+            host="127.0.0.1", port=args.web_port, threaded=True, use_reloader=False)
+    finally:
+        controller.stop()
 
 
 if __name__ == "__main__":

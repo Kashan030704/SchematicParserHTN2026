@@ -1,103 +1,60 @@
-"""Standalone camera-free, open-loop SO-100-DUPE pick/place CLI."""
-from __future__ import annotations
-
+"""Hardware-free contract smoke test; physical execution requires the browser gate."""
 import argparse
 import json
-import signal
-import sys
-from dataclasses import replace
 from pathlib import Path
 
-from arm.driver import ServoError
-from arm.sim_driver import SimDriver
-from calibrate import calibrate
-from config.so100 import ConfigurationError, load_config
-from executor import managed_arm, run_plan
-from palette import load_palette
-from planner import bom_to_plan
-
-
-def _hardware_driver(config):
-    # Unreachable during --dry-run; no hardware dependency is imported then.
-    from arm.pca9685_driver import PCA9685Driver
-    config.require_hardware()
-    print("WARNING: SG90 has NO position feedback. The first PWM command cannot be slewed from an unknown pose.")
-    print("Confirmed STARTUP ANGLE ASSUMPTION:", json.dumps(dict(config.startup_angles), sort_keys=True))
-    print("Use your established safe startup fixture/procedure. Do not force SG90 gears by hand.")
-    print("Clear/support the arm; home and relax on exit can move/release it. Keep a physical cutoff ready.")
-    if input("Type START only if the physical startup pose matches this assumption: ").strip() != "START":
-        raise ConfigurationError("Startup pose not confirmed; no I2C hardware opened")
-    return PCA9685Driver(config, startup_confirmed=True)
-
-
-def build_parser():
-    parser = argparse.ArgumentParser(description="Camera-free SG90/PCA9685 fixed-palette pick/place (no feedback)")
-    commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("run", "calibrate", "home"):
-        command = commands.add_parser(name)
-        command.add_argument("--config", help="Reviewed PWM JSON config; required for hardware")
-        command.add_argument("--palette", default="palette.yaml", help="Palette YAML (default: palette.yaml)")
-        if name == "run":
-            command.add_argument("--bom", required=True, help="Existing BOM JSON or sample_bom.json")
-            command.add_argument("--dry-run", action="store_true", help="Print plan/slewed moves; never open I2C")
-        elif name == "calibrate":
-            command.add_argument("--template", default="palette.yaml", help="Slot identities if output does not exist")
-    return parser
-
-
-def _execute(args):
-    config = load_config(args.config)
-    if args.command == "calibrate":
-        config.require_hardware()
-        # Scaffold targets are not moved to. Accept their 0..180 degree shape, but
-        # use actual reviewed limits for every live jog and the final saved palette.
-        template_config = replace(config, channels={
-            j: replace(c, min_angle=0, max_angle=180) for j, c in config.channels.items()})
-        template_path = args.palette if Path(args.palette).exists() else args.template
-        template = load_palette(template_path, template_config)
-        calibrate(_hardware_driver(config), template, args.palette)
-        return
-    palette = load_palette(args.palette, config)
-    palette.validate_all_angles_within_limits(config)
-    config = config.with_palette(palette)
-    plan = None
-    if args.command == "run":
-        # Complete planning BEFORE opening a driver or asking to enable PWM.
-        plan = bom_to_plan(json.loads(Path(args.bom).read_text()), palette)
-        print(f"Ordered pick plan ({len(plan.steps)} picks):", flush=True)
-        print(json.dumps(plan.to_dict(), indent=2), flush=True)
-        if args.dry_run:
-            print("DRY RUN: slewed target estimates only; NO I2C, camera, network, ingestion or feedback.", flush=True)
-            run_plan(plan, SimDriver(config))
-            print(f"Simulated {len(plan.steps)} pick/place cycles. Physical arrival/grip is not measured.")
-            return
-    config.require_hardware()
-    if not palette.calibrated:
-        raise ConfigurationError("Palette is simulation-only/untuned. Run calibrate before real motion.")
-    driver = _hardware_driver(config)
-    if args.command == "home":
-        with managed_arm(driver):
-            pass  # home -> relax -> close
-    else:
-        run_plan(plan, driver)
-        print(f"Sent {len(plan.steps)} open-loop pick/place cycles; verify tray contents manually.")
+from config import load_poses, load_tag_map
+from ingestion.parse import strict_json, validate_bom
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
-
-    def terminate(signum, frame):
-        raise KeyboardInterrupt(f"signal {signum}")
-
-    previous = signal.signal(signal.SIGTERM, terminate)
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    run = commands.add_parser("run")
+    run.add_argument("--bom", required=True)
+    run.add_argument("--dry-run", action="store_true", required=True)
+    run.add_argument("--poses", default="poses.yaml")
+    run.add_argument("--tags", default="tag_map.yaml")
+    args = parser.parse_args(argv)
     try:
-        _execute(args)
+        bom = validate_bom(strict_json(Path(args.bom).read_text()))
+        tags, poses = load_tag_map(args.tags), load_poses(args.poses)
+        missing = sorted(set(bom) - set(tags.values()))
+        if missing:
+            raise ValueError("No cup mapping for: " + ", ".join(missing))
+        print("DRY RUN ONLY — one cup per type, no socket/camera/hardware or Baseten call.")
+        print("Ordered plan:", json.dumps([{"type": part, "quantity_needed": qty,
+              "ops": ["detect", "grasp", "drive", "drop", "advance", "return", "observe"]}
+             for part, qty in bom.items()], indent=2))
+        from actuator.motion import Robot
+        from actuator.perception import DryRunPerception
+        from actuator.server import RobotNode, create_app as robot_app
+        from actuator.conveyor_node import create_app as belt_app
+        from orchestrator.controller import Controller
+        class InProcessClient:
+            def __init__(self, app):
+                self.client = app.test_client()
+            def call(self, method, path, payload=None, **kwargs):
+                response = self.client.open(path, method=method, json=payload)
+                value = response.get_json()
+                if response.status_code >= 400:
+                    raise RuntimeError(str(value))
+                return value
+            def get(self, path):
+                return self.call("GET", path)
+            def post(self, path, payload):
+                return self.call("POST", path, payload)
+        robot = Robot(poses, dry_run=True)
+        robot.connect()
+        try:
+            node = RobotNode(robot, DryRunPerception(tags, robot), tags, at_observe=True)
+            controller = Controller(InProcessClient(robot_app(node)), InProcessClient(belt_app()),
+                                    advance_seconds=poses["advance_seconds"])
+            result = controller.run(bom, approved=True, progress=lambda e: print(json.dumps(e)))
+            print(json.dumps(result, indent=2))
+        finally:
+            robot.estop()
         return 0
-    except (KeyboardInterrupt, EOFError):
-        print("Cancelled. Home/relax cleanup attempted where applicable; check/support the arm.", file=sys.stderr)
-        return 130
-    except (ValueError, OSError, ServoError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"ERROR: {exc}")
         return 2
-    finally:
-        signal.signal(signal.SIGTERM, previous)

@@ -1,1 +1,0 @@
-"""AprilTag camera node."""

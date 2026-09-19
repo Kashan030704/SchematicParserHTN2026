@@ -1,0 +1,9 @@
+# Copy to config.local.yaml; never place API keys here.
+pi: {base_url: "http://<CONFIRM_PI_IP>:8081"}
+arduino: {base_url: "http://<CONFIRM_ARDUINO_IP>:80", advance_seconds: 3}
+baseten:
+  url: "https://inference.baseten.co/v1"
+  model: null  # Or BASETEN_VISION_MODEL from the live catalog.
+  api_key_env: BASETEN_API_KEY
+tag_map: tag_map.yaml
+node_token_env: HCP_NODE_TOKEN

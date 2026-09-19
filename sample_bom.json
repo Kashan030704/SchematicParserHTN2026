@@ -1,7 +1,1 @@
-{
-  "components": [
-    {"component_id": "resistor:10k", "qty": 2},
-    {"component_id": "capacitor:0.1uF", "qty": 2},
-    {"component_id": "ic:NE555", "qty": 1}
-  ]
-}
+{"R3": 2, "C1": 1, "LED_RX": 3}

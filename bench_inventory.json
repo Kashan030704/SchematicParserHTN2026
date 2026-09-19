@@ -1,7 +1,0 @@
-{
-  "parts": [
-    {"type": "resistor", "value": "10k", "tag_id": 3, "zone": "bin-A"},
-    {"type": "capacitor", "value": "0.1uF", "tag_id": 5, "zone": "bin-B"},
-    {"type": "ic", "value": "NE555", "tag_id": 7, "zone": "bin-C"}
-  ]
-}

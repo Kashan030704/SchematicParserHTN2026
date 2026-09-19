@@ -1,19 +1,7 @@
 {
   "type": "object",
-  "required": ["components"],
-  "properties": {
-    "components": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["type", "value", "quantity", "refdes"],
-        "properties": {
-          "type": {"type": "string"},
-          "value": {"type": "string"},
-          "quantity": {"type": "integer"},
-          "refdes": {"type": "array", "items": {"type": "string"}}
-        }
-      }
-    }
-  }
+  "minProperties": 1,
+  "maxProperties": 100,
+  "propertyNames": {"type": "string", "minLength": 1, "maxLength": 100},
+  "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 10000}
 }
