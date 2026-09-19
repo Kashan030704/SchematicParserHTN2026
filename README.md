@@ -1,4 +1,8 @@
-# SchematicParserHTN2026 — schematic-to-fetch P0
+# Schematic to Fetch
+
+## Autonomous schematic-to-bench assembly
+
+Schematic to Fetch turns a circuit schematic into a physical parts run. Upload a PDF, let the vision model produce a validated bill of materials, and the Pi coordinates an AprilTag camera, a four-degree-of-freedom arm, and a timed conveyor to collect the mapped components.
 
 One Flask button starts PDF → BOM → arm pick/place → belt delivery. Python runs on the Pi; Arduino firmware owns PWM. Every HCP node is a TCP client. Host, orchestrator, ingestion, and UI share one process. Arm and conveyor share one serial connection while registering as separate nodes.
 
