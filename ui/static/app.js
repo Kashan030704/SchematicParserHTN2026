@@ -33,12 +33,12 @@ async function poll() {
     const ingestion = status.ingestion === 'live' ? 'Live Baseten PDF ingestion'
       : (remote && !status.simulation ? 'Reviewed JSON BOM only' : 'Fixture BOM (PDF contents are not inferred)');
     $('mode').textContent = cameraFree
-      ? `Camera-free · ${remote ? 'HCP TCP · ' : ''}${status.simulation ? 'SimDriver' : 'PHYSICAL PWM — no grip feedback'} · ${ingestion}`
+      ? `Camera-Augmented · ${remote ? 'HCP TCP · ' : ''}${status.simulation ? 'SimDriver' : 'PHYSICAL PWM — no grip feedback'} · ${ingestion}`
       : `${status.simulation ? 'Simulated HCP hardware' : 'Live bench'} · ${ingestion}`;
     $('demo-note').hidden = !status.demo_available;
     $('bom-input').hidden = !acceptsBom;
     const badges = cameraFree && !remote
-      ? ['Fixed palette ready', 'SG90 arm · simulated', 'Camera / I2C · not used']
+      ? ['Fixed palette ready', 'SG90 arm · simulated', 'Camera · augmented']
       : status.required_nodes.map(id => `${id} · ${id in status.nodes ? (status.health[id]?.payload?.state || 'connected') : 'offline'}`);
     $('nodes').replaceChildren(...badges.map(label => {
       const item = document.createElement('span');
