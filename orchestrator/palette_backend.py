@@ -5,7 +5,7 @@ import threading
 
 from arm.sim_driver import SimDriver
 from executor import run_plan
-from ingestion.parse import parse_pdf
+from ingestion.parse import parse_schematic
 from palette import MissingComponent
 from planner import bom_to_plan
 
@@ -27,7 +27,7 @@ class PaletteBackend:
             raise RuntimeError("A run is already active")
         try:
             update(state="parsing", step="Reading schematic", input_kind="pdf", **self.metadata)
-            return self._run_bom(parse_pdf(path, self.ingestion_model), update)
+            return self._run_bom(parse_schematic(path, self.ingestion_model), update)
         finally:
             self.run_lock.release()
 

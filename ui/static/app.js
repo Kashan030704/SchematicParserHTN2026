@@ -30,8 +30,8 @@ async function poll() {
     const remote = status.backend === 'palette-hcp';
     ready = status.ready;
     acceptsBom = status.accepts_bom;
-    const ingestion = status.ingestion === 'live' ? 'Live Baseten PDF ingestion'
-      : (remote && !status.simulation ? 'Reviewed JSON BOM only' : 'Fixture BOM (PDF contents are not inferred)');
+    const ingestion = status.ingestion === 'live' ? 'Live Baseten schematic ingestion'
+      : (remote && !status.simulation ? 'Reviewed JSON BOM only' : 'Fixture BOM for PDF/images; SCH uses component data');
     $('mode').textContent = cameraFree
       ? `Camera-free · ${remote ? 'HCP TCP · ' : ''}${status.simulation ? 'SimDriver' : 'PHYSICAL PWM — no grip feedback'} · ${ingestion}`
       : `${status.simulation ? 'Simulated HCP hardware' : 'Live bench'} · ${ingestion}`;
@@ -72,7 +72,7 @@ async function poll() {
       $('state').textContent = ready ? 'Ready' : 'Waiting for nodes';
       $('step').textContent = cameraFree
         ? (remote ? 'HCP palette node required; physical mode also needs local ARM/START on the Pi. Paste a BOM to begin.'
-          : 'Upload a PDF or paste a BOM. Every arm move stays simulated.')
+          : 'Upload a PDF, image, or SCH file, or paste a BOM. Every arm move stays simulated.')
         : 'Arm, conveyor, and camera are required.';
     }
     $('run-button').disabled = !ready || activeRun !== null;
@@ -90,14 +90,14 @@ $('run-form').addEventListener('submit', async event => {
   $('error').textContent = '';
   try {
     const bomText = acceptsBom ? $('bom-json').value.trim() : '';
-    const hasPdf = $('pdf').files.length > 0;
-    if (bomText && hasPdf) throw new Error('Choose a PDF OR a BOM, not both.');
+    const hasFile = $('pdf').files.length > 0;
+    if (bomText && hasFile) throw new Error('Choose a schematic file OR a BOM, not both.');
     let options;
     if (bomText) {
       options = {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({bom: JSON.parse(bomText)})};
     } else {
       const data = new FormData();
-      if (hasPdf) data.append('pdf', $('pdf').files[0]);
+      if (hasFile) data.append('pdf', $('pdf').files[0]);
       options = {method: 'POST', body: data};
     }
     const result = await api('/api/runs', options);
