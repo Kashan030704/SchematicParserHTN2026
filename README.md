@@ -10,6 +10,63 @@ One Flask button starts PDF → BOM → arm pick/place → belt delivery. Python
 
 The five-part simulation verifies software behavior. Physical delivery and live Baseten accuracy require event hardware, models, calibration, and a hand-checked schematic. Timed servo completion does not measure whether a part was gripped.
 
+## Architecture
+
+```text
+       HCP SCHEMATIC-TO-FETCH
+
+    ┌──────────────────┐
+    │ PDF Schematic    │
+    └────────┬─────────┘
+             ↓
+    ┌──────────────────┐
+    │ Ingestion        │
+    │ Pipeline         │
+    │                  │
+    │ PDF → Images     │
+    │ Vision / OCR     │
+    │ Symbol Detection │
+    └────────┬─────────┘
+             ↓
+    ┌──────────────────┐
+    │ Structured BOM   │
+    │                  │
+    │ R1 → 10kΩ        │
+    │ C1 → 100µF       │
+    │ U1 → NE555       │
+    └────────┬─────────┘
+             ↓
+    ╔══════════════════╗
+    ║       HCP        ║
+    ║ Hardware Context ║
+    ║     Protocol     ║
+    ╚════════╤═════════╝
+             ↓
+    ┌──────────────────┐
+    │       LLM        │
+    │                  │
+    │ "Fetch R1"       │
+    └────────┬─────────┘
+             ↓
+    ┌──────────────────┐
+    │ Camera + OpenCV  │
+    │ + AprilTags      │
+    └────────┬─────────┘
+             ↓
+      X,Y coordinates
+             ↓
+    ┌──────────────────┐
+    │  Raspberry Pi 5  │
+    │        ↓         │
+    │   Servo Control  │
+    └────────┬─────────┘
+             ↓
+             🦾
+           SO-100
+             ↓
+      PICK COMPONENT
+```
+
 ## Run the simulation
 
 Use Python 3.11+ (verified on Python 3.13). OpenCV contrib includes AprilTag detection; do not also install a conflicting opencv-python package.
