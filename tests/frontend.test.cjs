@@ -121,6 +121,8 @@ function background({reduceMotion = false, failWebGL = false} = {}) {
     document: {getElementById: () => canvas, documentElement: {scrollHeight: 2000},
       createElement: () => ({getContext: () => ({
         createRadialGradient: () => ({addColorStop() {}}), fillRect() {},
+        createLinearGradient: () => ({addColorStop() {}}), beginPath() {},
+        arc() {}, fill() {}, strokeRect() {}, fillText() {}, stroke() {}, moveTo() {}, lineTo() {},
       })})},
     requestAnimationFrame() { scheduled++; },
   });
