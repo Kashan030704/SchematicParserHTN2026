@@ -9,6 +9,7 @@ import uuid
 from flask import Flask, jsonify, request, send_from_directory
 
 from config import ROOT, load_hardware
+from ingestion.parse import SCHEMATIC_EXTENSIONS
 from orchestrator.runs import RunManager
 
 
@@ -76,12 +77,13 @@ def create_app(host=None, model=None, config=None, inventory=None, instance_path
         upload = request.files.get("pdf")
         if upload is None:
             if demo_pdf is None:
-                return jsonify(error="Upload a schematic PDF"), 400
+                return jsonify(error="Upload a schematic PDF, image, or SCH file"), 400
             path = demo_pdf
         else:
-            if not upload.filename or not upload.filename.lower().endswith(".pdf"):
-                return jsonify(error="Upload a .pdf file"), 400
-            path = Path(app.instance_path) / f"{uuid.uuid4().hex}.pdf"
+            suffix = Path(upload.filename or "").suffix.lower()
+            if suffix not in SCHEMATIC_EXTENSIONS:
+                return jsonify(error="Upload a PDF, JPEG, PNG, BMP, TIFF, or SCH file"), 400
+            path = Path(app.instance_path) / f"{uuid.uuid4().hex}{suffix}"
             upload.save(path)
         try:
             run_id = manager.submit(path, simulation=simulated)

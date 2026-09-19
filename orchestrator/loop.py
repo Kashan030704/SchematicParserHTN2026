@@ -11,7 +11,7 @@ from jsonschema import Draft7Validator
 
 from hcp_host.envelope import message
 from hcp_host.registry import parameters
-from ingestion.parse import parse_pdf, validate_bom
+from ingestion.parse import parse_schematic, validate_bom
 from orchestrator.runs import RunManager
 from orchestrator.schematic_advice import build_schematic_suggestions
 
@@ -81,7 +81,7 @@ class Orchestrator:
             raise RuntimeError("A run is already active")
         try:
             update(state="parsing", step="Reading schematic")
-            bom = parse_pdf(path, self.ingestion_model)
+            bom = parse_schematic(path, self.ingestion_model)
             return self._run_bom(bom, update)
         finally:
             self.run_lock.release()
