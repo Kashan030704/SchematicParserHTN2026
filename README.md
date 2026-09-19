@@ -4,6 +4,8 @@
 
 Schematic to Fetch turns a circuit schematic into a physical parts run. Upload a PDF, let the vision model produce a validated bill of materials, and the Pi coordinates an AprilTag camera, a four-degree-of-freedom arm, and a timed conveyor to collect the mapped components.
 
+![Schematic to Fetch simulation interface with arm, conveyor, and camera status and schematic PDF upload](docs/images/schematic-to-fetch-simulation.png)
+
 One Flask button starts PDF → BOM → arm pick/place → belt delivery. Python runs on the Pi; Arduino firmware owns PWM. Every HCP node is a TCP client. Host, orchestrator, ingestion, and UI share one process. Arm and conveyor share one serial connection while registering as separate nodes.
 
 The five-part simulation verifies software behavior. Physical delivery and live Baseten accuracy require event hardware, models, calibration, and a hand-checked schematic. Timed servo completion does not measure whether a part was gripped.
