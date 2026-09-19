@@ -13,12 +13,12 @@ from hcp_host.server import HCPHost
 from orchestrator.loop import Orchestrator, RunManager
 
 
-def create_app(host, model, config, inventory=None, instance_path=None, simulation=None):
+def create_app(host, model, config, inventory=None, instance_path=None, simulation=None, ingestion_model=None):
     app = Flask(__name__, instance_path=str(Path(instance_path or ROOT / "instance").resolve()))
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
     Path(app.instance_path).mkdir(parents=True, exist_ok=True)
     inventory = inventory if inventory is not None else json.loads((ROOT / "bench_inventory.json").read_text())
-    orchestrator = Orchestrator(host, model, inventory, config["belt"]["delivery_duration_s"], config["camera"]["max_pose_age_s"])
+    orchestrator = Orchestrator(host, model, inventory, config["belt"]["delivery_duration_s"], config["camera"]["max_pose_age_s"], ingestion_model=ingestion_model)
     manager = RunManager(orchestrator)
     app.extensions["runs"] = manager
     app.extensions["hcp"] = host
@@ -75,7 +75,8 @@ def create_app(host, model, config, inventory=None, instance_path=None, simulati
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--simulate", action="store_true", help="Explicit fixtures; never connects to an Arduino or Baseten")
+    parser.add_argument("--simulate", action="store_true", help="Use simulated camera, arm, and conveyor")
+    parser.add_argument("--live-ingestion", action="store_true", help="In --simulate mode, use Baseten for PDF→BOM while keeping simulated hardware")
     parser.add_argument("--config", default=os.getenv("HARDWARE_CONFIG", str(ROOT / "config/hardware.json")))
     parser.add_argument("--hcp-bind", default="0.0.0.0")
     parser.add_argument("--hcp-port", type=int, default=int(os.getenv("HCP_PORT", "9000")))
@@ -87,6 +88,10 @@ def main():
     if args.simulate:
         from orchestrator.simulation import FixtureModel, Simulation, simulation_config
         model, config = FixtureModel(), simulation_config()
+        ingestion_model = model
+        if args.live_ingestion:
+            from orchestrator.baseten_client import BasetenClient
+            ingestion_model = BasetenClient()
         if args.hcp_bind == "0.0.0.0":
             args.hcp_bind = "127.0.0.1"
     else:
@@ -97,13 +102,14 @@ def main():
         Kinematics(config["arm"])
         TagDetector(config["camera"])
         model = BasetenClient()
+        ingestion_model = model
     timeout = max(30, 4 * (config["arm"]["move_ms"] + config["arm"]["settle_ms"]) / 1000 + 10, config["belt"]["max_duration_s"] + 5)
     host = HCPHost(args.hcp_bind, args.hcp_port, command_timeout=timeout).start()
     atexit.register(host.stop)
     if args.simulate:
         simulation = Simulation(host, ROOT / "instance/simulation")
         atexit.register(simulation.stop)
-    app = create_app(host, model, config, simulation=simulation)
+    app = create_app(host, model, config, simulation=simulation, ingestion_model=ingestion_model)
     app.run(host=args.web_bind, port=args.web_port, threaded=True, debug=False, use_reloader=False)
 
 

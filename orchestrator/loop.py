@@ -67,8 +67,9 @@ def map_inventory(bom, inventory):
 
 
 class Orchestrator:
-    def __init__(self, host, model, inventory, delivery_duration=2.0, max_pose_age=1.0):
+    def __init__(self, host, model, inventory, delivery_duration=2.0, max_pose_age=1.0, ingestion_model=None):
         self.host, self.model, self.inventory = host, model, inventory
+        self.ingestion_model = ingestion_model or model
         if not math.isfinite(delivery_duration) or delivery_duration <= 0:
             raise ValueError("Delivery duration must be positive")
         self.duration, self.max_pose_age = delivery_duration, max_pose_age
@@ -79,7 +80,7 @@ class Orchestrator:
             raise RuntimeError("A run is already active")
         try:
             update(state="parsing", step="Reading schematic")
-            bom = parse_pdf(path, self.model)
+            bom = parse_pdf(path, self.ingestion_model)
             return self._run_bom(bom, update)
         finally:
             self.run_lock.release()

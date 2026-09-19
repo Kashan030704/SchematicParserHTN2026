@@ -23,6 +23,16 @@ Open <http://127.0.0.1:5000> and click **Run** without uploading a PDF. The fixt
 
 Demo assets live in ignored `instance/simulation/`. Simulation never opens an Arduino, real camera, or Baseten connection.
 
+To exercise the real PDF→BOM call while retaining simulated arm/conveyor behavior, export the Baseten key and start the hybrid backend:
+
+```sh
+export BASETEN_API_KEY='<your-key>'
+export BASETEN_VISION_MODEL='moonshotai/Kimi-K2.6'
+python -m ui.app --simulate --live-ingestion --web-port 5001
+```
+
+Upload a PDF at <http://127.0.0.1:5001>. Baseten supplies the BOM; only the downstream hardware actions are simulated. The key is read from the process environment and is never written to the repository.
+
 ## Event configuration
 
 Copy `config/hardware.example.json` to ignored `config/hardware.json` and fill every null / `<CONFIRM>`. Unfilled templates cannot enable motion. `.env.example` documents variables; `.env` is not auto-loaded. Keep API keys in the environment, never in committed files.
