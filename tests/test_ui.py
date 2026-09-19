@@ -124,3 +124,15 @@ def test_proposal_preserves_human_order_and_edits_refresh_advice(app):
         json={"approved": True, "bom": {"R3": 1}}, headers=headers(app)).status_code == 202
     result = eventually(lambda: (r if (r := client.get(f"/proposals/{identifier}").json)["state"] != "running" else None))
     assert not any("LED_RX" in note for note in result["llm_schematic_suggestions"])
+
+
+def test_decorative_background_is_local_and_keeps_script_policy(app):
+    client = app.test_client()
+    page = client.get("/")
+    assert "script-src 'self'" in page.headers["Content-Security-Policy"]
+    html = page.get_data(as_text=True)
+    assert 'src="https://' not in html
+    assert 'src="/static/vendor/three-r128.min.js" defer' in html
+    assert 'id="bg-canvas" aria-hidden="true"' in html
+    assert client.get("/static/vendor/three-r128.min.js").status_code == 200
+    assert client.get("/static/vendor/three-LICENSE.txt").status_code == 200

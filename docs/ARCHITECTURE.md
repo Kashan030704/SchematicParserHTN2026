@@ -120,6 +120,10 @@ The incoming light-themed layout, requested-parts list, schematic suggestions an
 cards are integrated with this gate, not the retired palette backend. Source SCH records
 remain available for review. Node health polling is read-only; simulated nodes are labeled.
 Flat BOM insertion order survives proposal serialization and becomes the approved pick order.
+`static/bg3d.js` adds the incoming scroll-reactive circuit board, bokeh, LED satellites
+and grid. Its pinned, MIT-licensed Three.js dependency is served from `static/vendor/`,
+keeping the same-origin script policy intact. It never reads or writes run state;
+no WebGL means a plain background, and reduced-motion settings disable animation.
 
 Before approval, upload and detection do not cause arm/chassis movement. The robot must already
 be positioned at observe. Approval contains the edited BOM and `approved: true`; duplicate

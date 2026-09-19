@@ -104,3 +104,51 @@ test("stop stays available and prevents approval of a pending proposal", async (
   assert.equal(calls.filter(c => c.url.endsWith("/approve")).length, 0);
   assert.equal(el.approve.disabled, true);
 });
+
+function background({reduceMotion = false, failWebGL = false} = {}) {
+  const THREE = {...require("../ui/static/vendor/three-r128.min.js")};
+  const canvas = {hidden: false}, listeners = {};
+  let frames = 0, scheduled = 0;
+  THREE.WebGLRenderer = class {
+    constructor() { if (failWebGL) throw Error("No WebGL"); }
+    setPixelRatio() {} setSize() {} setClearColor() {}
+    render() { frames++; }
+  };
+  const context = vm.createContext({THREE,
+    window: {innerWidth: 1024, innerHeight: 768, scrollY: 100, devicePixelRatio: 1,
+      matchMedia: () => ({matches: reduceMotion}),
+      addEventListener: (name, callback) => { listeners[name] = callback; }},
+    document: {getElementById: () => canvas, documentElement: {scrollHeight: 2000},
+      createElement: () => ({getContext: () => ({
+        createRadialGradient: () => ({addColorStop() {}}), fillRect() {},
+      })})},
+    requestAnimationFrame() { scheduled++; },
+  });
+  vm.runInContext(fs.readFileSync(path.join(ui, "bg3d.js"), "utf8"), context);
+  return {canvas, listeners, get frames() { return frames; }, get scheduled() { return scheduled; }};
+}
+
+test("3D background builds with the locally pinned Three.js and starts rendering", () => {
+  const result = background();
+  assert.equal(result.frames, 1);
+  assert.equal(result.scheduled, 1);
+  assert.equal(result.canvas.hidden, false);
+});
+
+test("reduced-motion background renders statically without an animation loop", () => {
+  const result = background({reduceMotion: true});
+  assert.equal(result.frames, 1);
+  assert.equal(result.scheduled, 0);
+  result.listeners.scroll();
+  result.listeners.resize();
+  assert.equal(result.frames, 2);
+  assert.equal(result.scheduled, 0);
+});
+
+test("missing WebGL or missing dependency cannot break the robot-control UI", () => {
+  const result = background({failWebGL: true});
+  assert.equal(result.canvas.hidden, true);
+  assert.equal(result.frames, 0);
+  assert.equal(result.scheduled, 0);
+  vm.runInNewContext(fs.readFileSync(path.join(ui, "bg3d.js"), "utf8"), {});
+});

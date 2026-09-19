@@ -124,6 +124,8 @@ Open [localhost:5002](http://localhost:5002). Upload a PDF, JPEG, PNG, BMP, TIFF
 KiCad/EAGLE XML `.sch` file. Inspect the proposed BOM beside the simulated tag rollup,
 edit it, check the confirmation box, and approve. The light-themed frontend displays
 requested quantities, node health, advisory checks, the ordered plan and live progress.
+Its animated 3D circuit-board background is decorative only: Three.js is bundled locally,
+no CDN is required, and reduced-motion/no-WebGL environments have a static/plain fallback.
 Uploading and previewing never move either actuator. The UI does not fabricate a BOM if
 Baseten fails. A malformed response, 429, refusal or timeout is surfaced without auto-retry.
 

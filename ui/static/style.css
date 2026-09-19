@@ -1,7 +1,8 @@
 :root { color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; color: #193530; background: #f3f5ef; }
 * { box-sizing: border-box; }
 body { margin: 0; }
-main { max-width: 1040px; margin: 5vh auto; padding: 24px; }
+#bg-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; display: block; pointer-events: none; background: #f3f5ef; }
+main { max-width: 1040px; margin: 5vh auto; padding: 24px; position: relative; z-index: 1; background: rgb(243 245 239 / 94%); border-radius: 16px; }
 .eyebrow { letter-spacing: .16em; font-size: .75rem; color: #63766a; }
 h1 { font-size: clamp(2rem, 6vw, 3.4rem); letter-spacing: -.05em; margin-bottom: .3em; }
 .intro { font-size: 1.15rem; color: #54695d; }
