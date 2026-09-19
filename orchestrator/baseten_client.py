@@ -9,9 +9,8 @@ class BasetenClient:
     def __init__(self, client=None, vision_model=None, tool_model=None, sleep=time.sleep):
         self.vision_model = vision_model or os.getenv("BASETEN_VISION_MODEL")
         self.tool_model = tool_model or os.getenv("BASETEN_TOOL_MODEL")
-        for name, value in (("BASETEN_VISION_MODEL", self.vision_model), ("BASETEN_TOOL_MODEL", self.tool_model)):
-            if not value or "<CONFIRM" in value:
-                raise ValueError(f"Set {name} from the live event catalog")
+        if not self.vision_model or "<CONFIRM" in self.vision_model:
+            raise ValueError("Set BASETEN_VISION_MODEL from the live event catalog")
         if client is None:
             from openai import OpenAI
             key = os.getenv("BASETEN_API_KEY")
@@ -45,5 +44,7 @@ class BasetenClient:
         return json.loads(response.content)
 
     def plan(self, messages, tools):
+        if not self.tool_model or "<CONFIRM" in self.tool_model:
+            raise ValueError("Set BASETEN_TOOL_MODEL from the live event catalog")
         response = self._completion(model=self.tool_model, messages=messages, tools=tools, parallel_tool_calls=False)
         return response.model_dump(exclude_none=True)

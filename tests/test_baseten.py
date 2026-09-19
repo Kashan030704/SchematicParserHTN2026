@@ -63,3 +63,9 @@ def test_event_model_slugs_are_required(monkeypatch):
     monkeypatch.delenv("BASETEN_VISION_MODEL", raising=False)
     with pytest.raises(ValueError, match="BASETEN_VISION_MODEL"):
         BasetenClient(CompletionStub([]), tool_model="tools")
+
+
+def test_ingestion_client_does_not_require_tool_model():
+    client = BasetenClient(CompletionStub([]), vision_model="fixture-vision")
+    with pytest.raises(ValueError, match="BASETEN_TOOL_MODEL"):
+        client.plan([], [])
