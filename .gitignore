@@ -6,5 +6,7 @@ __pycache__/
 out/
 instance/
 config/hardware.json
+config/so100.json
+palette.local.yaml
 firmware/pins.h
 *.egg-info/

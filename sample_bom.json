@@ -1,0 +1,7 @@
+{
+  "components": [
+    {"component_id": "resistor:10k", "qty": 2},
+    {"component_id": "capacitor:0.1uF", "qty": 2},
+    {"component_id": "ic:NE555", "qty": 1}
+  ]
+}

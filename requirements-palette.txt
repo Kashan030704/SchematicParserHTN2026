@@ -1,0 +1,2 @@
+# Minimal camera-free runtime (Python 3.10+); no vision or ingestion packages.
+PyYAML>=6.0.2,<7

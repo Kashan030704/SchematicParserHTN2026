@@ -1,5 +1,4 @@
 """Explicit software-only fixtures. Never imported to provide hardware defaults."""
-import copy
 import json
 import threading
 import time
@@ -8,12 +7,7 @@ import uuid
 from actuator.arm_node import ActuatorRuntime
 from hcp_sdk.loader import load_client
 from vision.camera_node import CameraNode
-
-DEMO_BOM = {"components": [
-    {"type": "resistor", "value": "10k", "quantity": 2, "refdes": ["R1", "R2"]},
-    {"type": "capacitor", "value": "0.1uF", "quantity": 2, "refdes": ["C1", "C2"]},
-    {"type": "ic", "value": "NE555", "quantity": 1, "refdes": ["U1"]},
-]}
+from orchestrator.fixtures import DEMO_BOM, FixtureIngestionModel, create_demo_pdf
 
 
 def simulation_config():
@@ -68,15 +62,7 @@ class SimulatedController:
         self.abort()
 
 
-class FixtureModel:
-    def __init__(self, bom=None):
-        self.bom = copy.deepcopy(DEMO_BOM if bom is None else bom)
-
-    def extract_bom(self, images, schema):
-        if not images or not all(image.startswith("data:image/png;base64,") for image in images):
-            raise ValueError("Simulation still requires PDF rasterization")
-        return copy.deepcopy(self.bom)
-
+class FixtureModel(FixtureIngestionModel):
     def plan(self, messages, tools):
         context = json.loads(next(m["content"] for m in reversed(messages) if m["role"] == "user"))
         if not context["belt_stopped"]:
@@ -96,15 +82,8 @@ class FixtureModel:
 def create_fixtures(directory):
     import cv2
     import numpy as np
-    import pymupdf
     directory.mkdir(parents=True, exist_ok=True)
-    pdf = directory / "demo.pdf"
-    document = pymupdf.open()
-    page = document.new_page()
-    page.insert_text((40, 40), "SIMULATION FIXTURE — BOM response is mocked, not inferred", fontsize=12)
-    page.insert_text((40, 70), "R1,R2: resistor 10k; C1,C2: capacitor 0.1uF; U1: IC NE555", fontsize=11)
-    document.save(pdf)
-    document.close()
+    pdf = create_demo_pdf(directory)
     image = np.full((400, 640), 255, dtype=np.uint8)
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
     for tag_id, x in ((3, 60), (5, 260), (7, 460)):

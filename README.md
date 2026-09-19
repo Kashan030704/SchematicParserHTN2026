@@ -1,8 +1,207 @@
 # Schematic to Fetch
 
-## Autonomous schematic-to-bench assembly
+## Camera-free SO-100-DUPE / SG90 pick-and-place
 
-Schematic to Fetch turns a circuit schematic into a physical parts run. Upload a PDF, let the vision model produce a validated bill of materials, and the Pi coordinates an AprilTag camera, a four-degree-of-freedom arm, and a timed conveyor to collect the mapped components.
+This module consumes an existing BOM and picks from fixed palette slots using **commanded target angles only**. SG90 PWM hobby servos have **no position feedback**: there is no encoder capture, sensed arrival, grip confirmation, camera, IK, or ingestion in this path.
+
+The explicit hardware layout is **six arm axes on PCA9685 channels 0–5, plus a separate gripper on channel 6** (seven outputs total). The sample names the sixth axis `joint_6` rather than guessing its mechanics. Rename logical axes in the config and all palette/startup/home maps together if needed. The Flask backend offers local camera-free simulation and a separate **HCP TCP palette-arm mode**, with simulation by default and explicit local arming for physical hardware. The original HCP/PDF/camera/Arduino workflow remains available separately below; ingestion code, legacy node definitions and the envelope/schema contracts are preserved.
+
+### Quick start: no hardware
+
+From the repository root, with Python 3.10+ (tested here on 3.13):
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-palette.txt
+python -m main run --bom sample_bom.json --dry-run
+```
+
+This prints the full ordered plan and **every interpolated step**, target-angle estimate, requested delay, settle interval, home and PWM-off action. It simulates five picks: A twice, B twice, C once. Simulated delays are logged without wall-clock waiting. Dry-run opens no I2C/network connection and does not import hardware, vision or ingestion libraries.
+
+### Integrated backend / UI: no hardware required
+
+```sh
+pip install -r requirements-backend.txt
+python -m ui.app --camera-free --web-port 5002
+```
+
+Open <http://127.0.0.1:5002>. With no upload, **Run** renders the demo PDF, obtains the fixture BOM, resolves palette slots and executes five simulated pick/place cycles. This mode uses a **fixed fixture BOM** even for uploaded PDFs; it does not infer their contents. Alternatively, paste an existing BOM in the form to bypass ingestion entirely. The UI shows the BOM, ordered angle plan, simulated placements, commanded-angle estimates, slew-step count, and the last 80 motion events.
+
+For real PDF extraction using the already configured Baseten environment:
+
+```sh
+# BASETEN_API_KEY and BASETEN_VISION_MODEL must already be set in this terminal.
+python -m ui.app --camera-free --live-ingestion --web-port 5002
+```
+
+Upload your actual schematic. The **existing ingestion pipeline** calls Baseten; downstream planning is deterministic and every arm move still uses SimDriver. No tool-calling model is needed, no HCP server/nodes are started, and no camera, conveyor, serial or I2C packages are imported. Live-ingestion mode requires an uploaded PDF or pasted BOM; it does not silently run the demo PDF. API credentials remain in the environment. Live calls can incur provider charges; offline fixture/BOM tests need no key.
+
+`--palette PATH` selects a slot map and `--arm-config PATH` optionally supplies angle/slew limits. Even a config with `hardware_confirmed: true` **cannot enable physical motors in `--camera-free` mode**. Dummy, uncalibrated palettes are allowed because execution is simulated. Physical hardware is available through the operator-confirmed CLI or the explicitly enabled HCP mode below. `--camera-free`, `--palette-hcp` and the legacy `--simulate` mode are mutually exclusive.
+
+The shared HTTP lifecycle is unchanged: submit → receive `202 {id,state}` → poll `GET /api/runs/<id>`. Camera-free mode also accepts a BOM directly:
+
+```sh
+curl -X POST http://127.0.0.1:5002/api/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"bom":{"components":[{"component_id":"resistor:10k","qty":1}]}}'
+```
+
+`POST /api/runs` also accepts multipart `pdf`. `GET /api/status` reports `backend: "palette"`, `hardware: "simulated"`, the ingestion mode, and readiness without hardware nodes. Requests are serialized (concurrent submissions get 409); malformed PDFs/BOMs, missing slots and invalid targets fail visibly without partial picking. The web simulation is limited to 200 picks per run and 16 MiB per request. Completed placements are **software simulation results**, never physical delivery confirmations. Run records are in memory and do not survive restart; uploaded PDFs remain in the ignored instance directory. The Flask service is for local/trusted use, not an authenticated public deployment.
+
+### HCP TCP integration: simulation first, then hardware
+
+The backend and arm node communicate over the **existing generated HCP client**, discovery registry, newline-delimited JSON framing, and matching `ack`/`done` lifecycle. No new socket layer or broker is introduced. The dedicated node ID is `palette_arm`; the legacy camera-based `arm` node is unchanged.
+
+```sh
+# Terminal 1: Flask plus HCP host (both loopback by default).
+pip install -r requirements-backend.txt
+python -m ui.app --palette-hcp --hcp-port 9000 --web-port 5002
+
+# Terminal 2, same environment: simulated arm node; no I2C access.
+python -m arm.hcp_node --host 127.0.0.1 --port 9000
+```
+
+Open <http://127.0.0.1:5002> and paste a BOM or use the demo. The UI waits for `palette_arm`, then executes all five sample picks over **real local TCP with simulated motors**. Append `--live-ingestion` to the backend command for actual Baseten PDF extraction. No camera/conveyor nodes are needed. The node generates/imports `out/palette_arm_hcp_support.py` itself; running that generated file alone does not attach motion handlers.
+
+For physical operation, first complete wiring review, config confirmation and palette tuning below. Both processes must load the same tuned palette; the node's hardware config is authoritative. On the Pi, install both `requirements-backend.txt` and `requirements-so100.txt`, then:
+
+```sh
+# Terminal 1: allow (but do not arm) a physical node. JSON BOM needs no API key.
+python -m ui.app --palette-hcp --allow-hardware \
+  --palette palette.local.yaml --arm-config config/so100.json --web-port 5002
+
+# Terminal 2, Pi: the only process that owns the PCA9685.
+python -m arm.hcp_node --hardware --host 127.0.0.1 --port 9000 \
+  --palette palette.local.yaml --config config/so100.json
+```
+
+At the Pi terminal, type `ARM`, review the startup-angle assumption, then type `START` only after establishing that safe physical pose. Submit the reviewed BOM within 30 seconds or the unused arming expires. Network requests **cannot arm** the node. Each completed run homes, disables PWM, closes the bus, and requires fresh local confirmation for another run. Physical mode refuses fixture PDF ingestion; use a reviewed JSON BOM or explicitly enable live ingestion.
+
+For separate machines, set the backend's `--hcp-bind` to its confirmed LAN interface and the node's `--host` to that same address. Do not guess the Pi IP or expose TCP/Flask to the public internet: this demo has **no authentication/TLS**. Only one backend/driver process should control the arm, and only the intended node should be on the trusted network. Config `hardware_confirmed`, a calibrated palette, backend `--allow-hardware`, node `--hardware`, and local startup confirmation are all required.
+
+During a run, a heartbeat keeps a five-second node-side lease alive while the independent motion worker runs. A missing heartbeat, TCP disconnect, emergency abort, or node shutdown cancels the active ramp and **attempts immediate PWM disable, without recovery homing**. This differs intentionally from ordinary standalone CLI cleanup: losing control of a network session must not start another trajectory. Reconnection never resumes a run or re-arms physical hardware. Keep the arm supported; disabling PWM may release it. A process crash, hung I2C bus or failed disable still needs a physical cutoff.
+
+See [JSON formats and complete HCP command lifecycle](docs/palette-hcp.md) for the HTTP BOM, wire envelopes, session commands, and failure semantics. `done` means the commanded ramp and settle finished—not sensed arrival or successful grip. The UI marks physical placements **unverified**.
+
+### Wiring: PCA9685, not a serial servo bus
+
+Connect Pi SDA/SCL to PCA9685 SDA/SCL, Pi **3.3 V logic** to VCC, and Pi ground to GND. Connect a **separate regulated 5–6 V servo supply**, appropriate for your actual SG90 variant, to the servo V+ rail and ground. Join servo supply ground, PCA9685 ground and Pi ground. Never power the servos from the logic regulator or Pi's USB/5 V rail. Check polarity, connector pinout, adequate current capacity and supply stability before enabling motion. See Adafruit's [PCA9685 pinout and power separation](https://learn.adafruit.com/16-channel-pwm-servo-driver/pinouts).
+
+Connect six arm servo signals to channels 0–5 and the gripper signal to 6; servo power/ground go to their corresponding rails. Enable I2C on the Pi. Confirm the actual bus/address; sample values are bus 1 and address 0x40 (decimal 64). Only one process may own this board. All channels share the PWM frequency, so do not share the board with loads requiring a different frequency.
+
+Keep a physical servo-power cutoff within reach. PCA9685 OE can provide a separately engineered hardware output-disable path; this implementation does not control an OE GPIO. **The board keeps generating PWM if Python hangs or dies.** Software cleanup cannot replace a physical stop.
+
+### Review config and pulse calibration
+
+```sh
+# On the Pi, for real hardware:
+pip install -r requirements-so100.txt
+cp config/so100.example.json config/so100.json
+```
+
+Settings live in `config/so100.py`, not root `config.py`, to preserve the repo's existing `config/` package. The local JSON file is git-ignored. Review before setting `hardware_confirmed: true`:
+
+| Setting | Meaning |
+| --- | --- |
+| `i2c_bus`, `i2c_address` | Actual Linux bus and decimal 7-bit device address |
+| `pwm_frequency_hz` | 50 Hz for this SG90 implementation |
+| `reference_clock_hz` | Internal oscillator estimate; default 25 MHz, calibrate if pulse accuracy requires it |
+| `channels.<joint>.channel` | Unique PCA9685 output 0–15; sample uses 0–6 |
+| `min_pulse_us`, `max_pulse_us` | Pulse calibration endpoints for **0° and 180°**, not mechanical limit endpoints |
+| `min_angle`, `max_angle` | Safe logical command range, within 0–180° |
+| `invert` | Map the pulse using `180 - angle` |
+| `max_step_deg`, `settle_ms` | Per-joint maximum commanded increment and positive settling time |
+| `move_step_deg`, `step_delay_ms` | Global increment cap and delay after every ramp frame; delay must be ≥20 ms |
+| `home_pose`, `gripper_open_deg`, `gripper_closed_deg` | Fallback targets; a loaded palette supplies the run's home/jaw targets |
+| `startup_angles` | All seven assumed physical starting angles, explicitly confirmed for each session |
+
+The sample uses conservative **1000–2000 µs** endpoints, 1° maximum increments, and 40 ms between frames. They are illustrative, not measured for your arm. SG90 variants may support ranges near 500–2400 µs, but do not adopt those extremes without checking your unit. Start near the centre with the linkage unloaded/supported, extend pulse endpoints incrementally, observe travel, and stop before buzzing, binding or hard stops. Set joint limits inside safe mechanical travel. Never force the gears to “capture” a position.
+
+Pulse mapping is linear over logical 0–180°, with optional inversion; tightening `min_angle/max_angle` does **not** stretch the pulse range. After changing pulse endpoints, inversion, horn mounting, channel assignment or mechanics, retune the palette. The driver accounts for prescaler rounding and staggers PWM phases using the [PCA9685 register specification](https://www.nxp.com/docs/en/data-sheet/PCA9685.pdf). It uses [smbus2](https://smbus2.readthedocs.io/en/latest/); the small `PWMBackend` interface also allows an Adafruit implementation without changing the planner/executor.
+
+### Startup: an unavoidable open-loop limitation
+
+The first pulse cannot be slew-limited relative to an **unknown physical pose**. `startup_angles` is an operator-supplied assumption, not a measurement or automatic last-session restore. Every real command prints it and requires typing `START` **before opening I2C**. Establish a known, supported pose through your safe assembly/startup fixture procedure; do not force SG90 gears by hand. If the pose is unknown, do not confirm. First energization can jump if the assumption is wrong.
+
+After that first assumed frame, the driver ramps from its last successfully sent targets. Slippage, stalls, gravity sag and missed physical movement remain invisible. `relax()` ends the session; further moves require a new driver and startup confirmation.
+
+### Calibrate by TUNING, not capture
+
+Edit slot IDs, labels and component lists in `palette.yaml` or a custom template, then:
+
+```sh
+python -m main calibrate --config config/so100.json --palette palette.local.yaml --template palette.yaml
+```
+
+For **each joint of each waypoint**, the CLI shows its current **commanded** angle. Enter:
+
+- `+` / `-`: nudge 1°.
+- `+N` / `-N`: move relatively by N degrees.
+- `=N`: set an absolute target angle.
+- `save`: accept this joint and advance.
+- `quit` / Ctrl-C: cancel, attempt home, then relax.
+
+Every jog—including jaw tuning—uses the same slew, angle limits and settle delays as execution. Out-of-limit/nonfinite input is loudly rejected without moving. The flow tunes home, place approach/drop, each slot's approach/grasp, then gripper open/closed at the newly tuned home. It starts each pose from current commanded targets: **it never automatically replays dummy template waypoints**. Watch all intervening motion for clearance.
+
+Finally type `SAVE` to atomically write the complete palette. Cancelling before that preserves the previous file. If the output file already exists, it supplies the slot identities for retuning. Until a new home is accepted, cleanup uses the confirmed startup pose as its recovery target; afterward it uses the newly tuned home. Calibration exits with home → relax, not powered holding. Support the arm against gravity.
+
+The sample is `calibrated: false` and blocked from real run/home. Successful tuning writes `calibrated: true`; this is an operator-tuning flag, **not evidence of measured positions or grip reliability**. Use ignored `palette.local.yaml` for real settings; omitting `--palette` overwrites the root sample.
+
+### Palette and BOM contracts
+
+`palette.py` strictly validates this shape:
+
+| Field | Shape |
+| --- | --- |
+| `home` | All six arm joint names → finite target degrees |
+| `gripper` | `open_deg`, `closed_deg` → distinct target angles |
+| `place_target` | `approach`, `drop` → six-joint target maps |
+| `slots` | Nonempty list of `{id, label, components, approach, grasp}` |
+| `components` | Nonempty component-ID strings; each ID maps to exactly one slot |
+| `calibrated` | Optional boolean, defaults false |
+
+The gripper must not appear in arm waypoints: lift/home must preserve the current jaw command. Duplicate IDs/YAML keys, missing/extra joints, malformed numbers, and out-of-limit angles fail validation. `lookup(component_id)` raises `MissingComponent`; `validate_all_angles_within_limits()` uses the palette's configured limits.
+
+The sample BOM is `{"components":[{"component_id":"resistor:10k","qty":2}]}`. Existing ingestion output works unchanged: a line with `type: "resistor"`, `value: "10k"`, `quantity: 2` resolves to the exact ID `resistor:10k`. Positive integer quantities expand in input order. All unresolved lines are reported and **the entire run is rejected before hardware opens**. No part is silently skipped.
+
+### Run the tuned palette
+
+```sh
+# Inspect the real targets without hardware:
+python -m main run --bom sample_bom.json --palette palette.local.yaml --config config/so100.json --dry-run
+# Supervised execution; requires START confirmation:
+python -m main run --bom sample_bom.json --palette palette.local.yaml --config config/so100.json
+# Home, then disable PWM:
+python -m main home --palette palette.local.yaml --config config/so100.json
+```
+
+Each pick: home → open jaws → slot approach → grasp → verification hook → close/settle → lift to approach → place approach → drop → open/settle → home. Every frame writes all seven outputs; each axis advances at most `min(move_step_deg, channel.max_step_deg)`. The driver waits the configured step delay and then the maximum settle time of the targeted joints. This limits **commanded** motion, not measured physical velocity.
+
+Standalone CLI success, exceptions, Ctrl-C and SIGTERM attempt home → relax → close. Relax explicitly sets every owned output full-off even if one channel fails. Home is refused after an I2C write failure makes the commanded state uncertain; cleanup still attempts to disable all outputs and reports the failure. Bus/power failure, SIGKILL or a machine crash cannot guarantee a stop. Removing PWM does not disconnect servo supply and may release holding force.
+
+There is no collision planning, stall timeout based on motion feedback, stock sensing, or verified grasp. `grasp_verify()` is a no-op before closure; a future external sensor can raise/return false to reject the pick. Check all paths, including drop→home and recovery from intermediate poses. Begin with empty jaws. Tune a gentle closed target: the software cannot detect an SG90 straining against a hard stop.
+
+Repeated quantities revisit the **same grasp pose**. A feeder/operator must present another component there after each pick; a scattered tray is not a repeatable feeder. Keep the arm/palette/tray fixed and verify the delivered parts manually.
+
+### Driver seam and verification
+
+`ArmDriver` exposes `move_to(waypoint, blocking=True)`, `set_gripper`, `home`, `relax`, and a copy of `commanded_angles`. **There is no `read_positions()`.** Blocking means commanded ramp + timed settling, never sensed arrival. Nonblocking moves return a Future; overlapping moves fail and relax cancels/waits for the active ramp before disabling outputs. The optional `tune_gripper(angle_deg)` extension supports calibration. A future smart-servo adapter can implement the same interface without planner/executor changes.
+
+The previous Feetech driver/encoder-capture calibration and their tests have been replaced, not selected as an alternate SG90 mode. Old encoder palettes/configs are incompatible and fail validation. No serial servo SDK is required.
+
+```sh
+pip install pytest
+python -m pytest -q tests/test_palette_pick_place.py tests/test_pca9685_driver.py
+```
+
+Tests cover BOM mapping, full dry-run import isolation, all-channel slew frames, configured delays, jaw preservation, pulse mapping/inversion, PWM registers, I2C failures, async cancellation, recovery/relax, and live-tuning save/cancel behavior with fake hardware. Real grip reliability, power stability and collision clearance still require supervised hardware testing.
+
+## Legacy PDF / AprilTag / Arduino demo
+
+The remaining instructions describe the original camera-based hardware path, not the SO-100 CLI above.
+
+Upload a PDF, let the vision model produce a validated bill of materials, and the Pi coordinates an AprilTag camera, a four-degree-of-freedom arm, and a timed conveyor to collect the mapped components.
 
 ![Schematic to Fetch simulation interface with arm, conveyor, and camera status and schematic PDF upload](docs/images/schematic-to-fetch-simulation.png)
 

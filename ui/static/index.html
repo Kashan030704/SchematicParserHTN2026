@@ -13,23 +13,42 @@
     <h1>Schematic to Fetch</h1>
     <p class="intro">Choose a circuit. Collect its parts.</p>
     <p id="mode" role="status">Connecting to the bench…</p>
-    <section aria-label="Connected hardware">
+    <section aria-label="Backend readiness">
       <div id="nodes" class="nodes"></div>
     </section>
     <form id="run-form">
       <label for="pdf">Schematic PDF</label>
       <input id="pdf" name="pdf" type="file" accept="application/pdf,.pdf">
+      <details id="bom-input" hidden>
+        <summary>Or paste an existing BOM JSON (no ingestion call)</summary>
+        <label for="bom-json">BOM</label>
+        <textarea id="bom-json" rows="6" spellcheck="false" placeholder='{"components":[{"component_id":"resistor:10k","qty":2}]}'></textarea>
+      </details>
       <p id="demo-note" hidden>Leave empty to run the five-part simulation fixture. <a href="/demo.pdf">View fixture</a></p>
       <button id="run-button" type="submit" disabled>Run</button>
     </form>
     <section id="progress" aria-live="polite">
-      <h2 id="state">Ready when the bench is connected</h2>
-      <p id="step">Arm, conveyor, and camera are required.</p>
-      <progress id="count" value="0" max="1" aria-label="Delivered quantities"></progress>
+      <h2 id="state">Connecting</h2>
+      <p id="step">Checking backend mode…</p>
+      <progress id="count" value="0" max="1" aria-label="Completed placements"></progress>
       <p id="quantities"></p>
       <p id="error" role="alert"></p>
       <ul id="warnings"></ul>
       <ol id="delivered"></ol>
+      <details>
+        <summary>BOM</summary>
+        <pre id="bom-result">Awaiting BOM</pre>
+      </details>
+      <details id="plan-details" hidden>
+        <summary>Ordered plan and commanded motion</summary>
+        <pre id="plan-result">No plan executed</pre>
+        <p id="motion-count"></p>
+        <pre id="angles"></pre>
+        <details>
+          <summary>Local simulation events (last 80; remote node reports angles/count)</summary>
+          <pre id="motion-events"></pre>
+        </details>
+      </details>
     </section>
   </main>
 </body>

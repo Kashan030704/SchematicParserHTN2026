@@ -1,0 +1,3 @@
+# Hardware-only additions. Simulation needs only requirements-palette.txt.
+-r requirements-palette.txt
+smbus2>=0.4.3,<1

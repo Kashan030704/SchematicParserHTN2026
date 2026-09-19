@@ -9,7 +9,7 @@ SDK = Path(__file__).resolve().parent
 
 
 def load_client(device_id, host, port, output_dir):
-    if device_id not in ("arm", "conveyor", "camera"):
+    if device_id not in ("arm", "conveyor", "camera", "palette_arm"):
         raise ValueError("Unknown built-in node")
     definition = json.loads((SDK / "nodes" / f"{device_id}.json").read_text())
     validate_hcp_json_schema(definition, SDK / "hcp_sdk_schema.json")

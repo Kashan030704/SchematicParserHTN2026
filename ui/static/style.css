@@ -18,3 +18,7 @@ h2 { font-size: 1.2rem; }
 #error, #warnings { color: #994322; }
 a { color: #245c48; }
 li { margin-block: 8px; }
+details { margin-top: 16px; }
+summary { cursor: pointer; }
+textarea { width: 100%; box-sizing: border-box; font: .9rem ui-monospace, monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; font-size: .8rem; }

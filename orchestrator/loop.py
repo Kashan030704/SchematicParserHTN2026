@@ -6,13 +6,13 @@ import math
 import re
 import threading
 import time
-import uuid
 
 from jsonschema import Draft7Validator
 
 from hcp_host.envelope import message
 from hcp_host.registry import parameters
 from ingestion.parse import parse_pdf, validate_bom
+from orchestrator.runs import RunManager
 
 SYSTEM_PROMPT = """Deliver the requested schematic parts using the connected HCP tools.
 Inventory tags identify repeatable pickup bins, with one graspable part presented
@@ -203,40 +203,6 @@ class Orchestrator:
                 pass
             raise
 
-
-class RunManager:
-    def __init__(self, orchestrator):
-        self.orchestrator = orchestrator
-        self.lock = threading.RLock()
-        self.runs = {}
-        self.active = None
-
-    def submit(self, path, simulation=False):
-        with self.lock:
-            if self.active is not None:
-                raise RuntimeError("A run is already active")
-            run_id = uuid.uuid4().hex
-            self.active = run_id
-            self.runs[run_id] = {"id": run_id, "state": "queued", "step": "Queued", "warnings": [], "delivered": [], "simulation": simulation}
-            threading.Thread(target=self._run, args=(run_id, path), daemon=True).start()
-            return run_id
-
-    def _run(self, run_id, path):
-        def update(**values):
-            with self.lock:
-                self.runs[run_id].update(copy.deepcopy(values))
-        try:
-            result = self.orchestrator.run_pdf(path, update)
-            update(**result, step="Finished")
-        except Exception as exc:
-            update(state="failed", step="Stopped", error=str(exc))
-        finally:
-            with self.lock:
-                self.active = None
-
-    def get(self, run_id):
-        with self.lock:
-            return copy.deepcopy(self.runs[run_id])
 
 
 if __name__ == "__main__":

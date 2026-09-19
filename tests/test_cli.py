@@ -6,15 +6,22 @@ import sys
 import time
 import urllib.request
 
+import pytest
+
 from config import ROOT
 from tests.conftest import eventually
 
 
-def test_simulation_entrypoint_serves_and_completes_a_run(tmp_path):
+@pytest.mark.parametrize("mode", ["--simulate", "--camera-free", "--palette-hcp"])
+def test_simulation_entrypoint_serves_and_completes_a_run(tmp_path, mode):
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
-    process = subprocess.Popen([sys.executable, "-m", "ui.app", "--simulate", "--hcp-port", "0", "--web-port", str(port)], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        hcp_port = reservation.getsockname()[1]
+    process = subprocess.Popen([sys.executable, "-m", "ui.app", mode, "--hcp-port", str(hcp_port), "--web-port", str(port)], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    node_process = None
     base = f"http://127.0.0.1:{port}"
 
     def ready():
@@ -27,7 +34,17 @@ def test_simulation_entrypoint_serves_and_completes_a_run(tmp_path):
             return None
 
     try:
-        assert eventually(ready, timeout=10)["simulation"] is True
+        status = eventually(ready, timeout=10)
+        assert status["simulation"] is True
+        if mode == "--camera-free":
+            assert status["backend"] == "palette" and status["required_nodes"] == []
+            assert status["nodes"] == {} and status["ready"]
+        elif mode == "--palette-hcp":
+            assert status["backend"] == "palette-hcp" and status["required_nodes"] == ["palette_arm"]
+            assert not status["ready"]
+            node_process = subprocess.Popen([sys.executable, "-m", "arm.hcp_node", "--port", str(hcp_port)],
+                                            cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            eventually(lambda: ready().get("ready"), timeout=10)
         with urllib.request.urlopen(urllib.request.Request(base + "/api/runs", method="POST", data=b""), timeout=2) as reply:
             run_id = json.load(reply)["id"]
 
@@ -40,6 +57,14 @@ def test_simulation_entrypoint_serves_and_completes_a_run(tmp_path):
         assert result["state"] == "complete", result
         assert len(result["delivered"]) == 5
     finally:
+        if node_process is not None:
+            node_process.terminate()
+            try:
+                node_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                node_process.kill()
+                node_process.wait(timeout=2)
+            node_process.stderr.close()
         process.terminate()
         try:
             process.wait(timeout=5)

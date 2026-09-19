@@ -1,0 +1,100 @@
+{
+  "i2c_bus": 1,
+  "i2c_address": 64,
+  "pwm_frequency_hz": 50,
+  "reference_clock_hz": 25000000,
+  "channels": {
+    "base": {
+      "channel": 0,
+      "min_pulse_us": 1000,
+      "max_pulse_us": 2000,
+      "min_angle": 20,
+      "max_angle": 160,
+      "invert": false,
+      "max_step_deg": 1,
+      "settle_ms": 250
+    },
+    "shoulder": {
+      "channel": 1,
+      "min_pulse_us": 1000,
+      "max_pulse_us": 2000,
+      "min_angle": 20,
+      "max_angle": 160,
+      "invert": false,
+      "max_step_deg": 1,
+      "settle_ms": 250
+    },
+    "elbow": {
+      "channel": 2,
+      "min_pulse_us": 1000,
+      "max_pulse_us": 2000,
+      "min_angle": 20,
+      "max_angle": 160,
+      "invert": false,
+      "max_step_deg": 1,
+      "settle_ms": 250
+    },
+    "wrist_flex": {
+      "channel": 3,
+      "min_pulse_us": 1000,
+      "max_pulse_us": 2000,
+      "min_angle": 20,
+      "max_angle": 160,
+      "invert": false,
+      "max_step_deg": 1,
+      "settle_ms": 250
+    },
+    "wrist_roll": {
+      "channel": 4,
+      "min_pulse_us": 1000,
+      "max_pulse_us": 2000,
+      "min_angle": 20,
+      "max_angle": 160,
+      "invert": false,
+      "max_step_deg": 1,
+      "settle_ms": 250
+    },
+    "joint_6": {
+      "channel": 5,
+      "min_pulse_us": 1000,
+      "max_pulse_us": 2000,
+      "min_angle": 20,
+      "max_angle": 160,
+      "invert": false,
+      "max_step_deg": 1,
+      "settle_ms": 250
+    },
+    "gripper": {
+      "channel": 6,
+      "min_pulse_us": 1000,
+      "max_pulse_us": 2000,
+      "min_angle": 20,
+      "max_angle": 160,
+      "invert": false,
+      "max_step_deg": 1,
+      "settle_ms": 400
+    }
+  },
+  "move_step_deg": 1,
+  "step_delay_ms": 40,
+  "gripper_open_deg": 60,
+  "gripper_closed_deg": 100,
+  "home_pose": {
+    "base": 90,
+    "shoulder": 90,
+    "elbow": 90,
+    "wrist_flex": 90,
+    "wrist_roll": 90,
+    "joint_6": 90
+  },
+  "startup_angles": {
+    "base": 90,
+    "shoulder": 90,
+    "elbow": 90,
+    "wrist_flex": 90,
+    "wrist_roll": 90,
+    "joint_6": 90,
+    "gripper": 60
+  },
+  "hardware_confirmed": false
+}

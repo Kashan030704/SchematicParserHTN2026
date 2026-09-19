@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "device_id": "palette_arm",
+    "freetext_desc": "Camera-free SO-100-DUPE: six SG90 arm axes and a separate gripper via PCA9685. Executes fixed local palette targets with slew and timed settling. No position or grip feedback. Hardware must be armed locally; network commands cannot arm it."
+  },
+  "available_commands": {
+    "get_state": {
+      "freetext_desc": "Read readiness, simulation/hardware mode, palette fingerprint and commanded-angle estimates. These are not measured positions.",
+      "params": []
+    },
+    "begin_run": {
+      "freetext_desc": "Reserve an already locally armed arm for a unique run. Reject mismatched palette fingerprints or hardware mode. Starts a heartbeat lease; never arms physical hardware.",
+      "params": [{"run_id": "string"}, {"palette_id": "string"}, {"hardware": "bool"}]
+    },
+    "pick_place": {
+      "freetext_desc": "Execute exactly one fixed-slot pick/place/home cycle within the active run. Unit numbers start at 1 and increase without gaps. Component must map to this slot locally. Done means commands and settling finished, NOT verified delivery.",
+      "params": [{"run_id": "string"}, {"unit": "int"}, {"component_id": "string"}, {"slot_id": "string"}]
+    },
+    "heartbeat": {
+      "freetext_desc": "Renew the active run's safety lease and return state. Must continue during movement. Expiry cancels motion and disables PWM.",
+      "params": [{"run_id": "string"}]
+    },
+    "end_run": {
+      "freetext_desc": "Finish the matching run: home, disable PWM, close driver. Physical hardware requires local re-arming before another run.",
+      "params": [{"run_id": "string"}]
+    },
+    "abort_run": {
+      "freetext_desc": "Urgently cancel only the matching run and disable PWM without recovery motion. Does not affect another run. Physical outcome is unverified.",
+      "params": [{"run_id": "string"}]
+    }
+  }
+}
