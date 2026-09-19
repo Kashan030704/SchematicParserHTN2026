@@ -126,6 +126,14 @@ Tests cover framing and UTF-8 fragmentation, discovery/late nodes, correlation, 
 At the event, compare the extracted BOM to hand-checked ground truth, measure `advance(2.0)`, verify calibration, then complete at least five consecutive physical picks with no failed grip. Manually compare tray contents to the schematic. Simulation success is separate from physical acceptance.
 
 Voice, missing-part UI polish, grip replanning, Snowflake, and fine-tuned readers remain P1/P2.
-sed.
+
+## Reference provenance
+
+Reference: [danielzyy/calhacks2025](https://github.com/danielzyy/calhacks2025/tree/f7cf00663244377b9c79270f0175756904819534), pinned at `f7cf00663244377b9c79270f0175756904819534`.
+
+- Generator: retains upstream validation, CLI and output naming; the generated connect/listen/events/response-queue template is extracted into `hcp_sdk/runtime.py` and extended with framing, IDs, independent workers and backoff.
+- Node schema: copied unchanged.
+- Host: adapts `hcp_client/main.py` and `hcp_executor.py` accept/read/queue and registry-dispatch code.
+- Camera: adapts `vision/tag_detections.py` OpenCV AprilTag setup; upstream hardcoded geometry/calibration is not used.
 
 Baseten calls follow its [Chat Completions API](https://docs.baseten.co/reference/inference-api/chat-completions). No ASI1, LeRobot motor layer, microphone stack, or broker is included.
