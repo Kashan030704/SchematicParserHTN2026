@@ -82,8 +82,16 @@ integer quantities. Malformed JSON, duplicate keys, invalid quantities and nonfi
 are rejected. The proposal still requires human review: valid JSON does not mean the
 schematic was interpreted correctly.
 
-The old `components: [{type, value, quantity, refdes}]` contract has been retired for this
-version. Existing saved BOMs using that shape must be converted before submission.
+The execution contract is the flat object above, not the old
+`components: [{type, value, quantity, refdes}]` payload. Existing saved BOMs using that
+shape must be converted before submission.
+
+The incoming frontend's PDF/JPEG/PNG/BMP/TIFF uploads are retained. `sch.py` additionally
+parses legacy KiCad and EAGLE XML `.sch` locally, without Baseten credentials. It keeps
+rich component records as review-only metadata and converts them to the flat execution
+BOM: exact `type:value` matches take priority; otherwise all reference labels in a group
+must match configured cups. Unmapped labels remain visible and require a human edit before
+approval. Hierarchical designs and modern `.kicad_sch` files are rejected, not partly read.
 
 ### `orchestrator/`
 
@@ -91,6 +99,9 @@ version. Existing saved BOMs using that shape must be converted before submissio
   Endpoint/model are configurable; key is read from an environment-variable name.
   There is no fake fallback if Baseten fails, and no automatic 429 retry.
 - `ingest.py`: small wrapper connecting the UI to existing ingestion.
+- `schematic_advice.py`: preserved frontend feature with deterministic component rules.
+  These are advisory checks, not another LLM call or a netlist/electrical-safety review.
+  They never alter the approved BOM, dispatch commands or trigger replanning.
 - `nodes.py`: common HTTP JSON client for both Pi and belt. Bounded response sizes, explicit
   timeouts, no redirects, no ambient proxy for LAN requests, no command retries.
 - `controller.py`: freezes the approved BOM, starts a run, and dispatches the sequential
@@ -105,6 +116,10 @@ Visual corrections are the Pi executor's responsibility.
 
 `app.py` provides the browser, upload/parse endpoint, preview, explicit approval, progress
 polling and stop. `static/index.html`, `app.js`, and `style.css` implement the front end.
+The incoming light-themed layout, requested-parts list, schematic suggestions and progress
+cards are integrated with this gate, not the retired palette backend. Source SCH records
+remain available for review. Node health polling is read-only; simulated nodes are labeled.
+Flat BOM insertion order survives proposal serialization and becomes the approved pick order.
 
 Before approval, upload and detection do not cause arm/chassis movement. The robot must already
 be positioned at observe. Approval contains the edited BOM and `approved: true`; duplicate
@@ -362,7 +377,8 @@ Compared with the earlier custom-arm repository:
 - added fault latching, fresh/unique tag checks, bounded corrections, no-motion inspection,
   simulation and integration coverage;
 - rewrote architecture/API/setup docs and retained upstream codegen/schema provenance.
+- merged the incoming light frontend, multi-format/SCH uploads, requested-parts and
+  progress displays, and rule-based schematic advice into the approval-gated architecture.
 
 Removed tracked modules remain recoverable from Git history. No unrelated ignored user
-calibration files or credentials were deleted. Changes have not been committed or pushed
-as part of this handoff.
+calibration files or credentials were deleted. Secrets remain local and ignored.

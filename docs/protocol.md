@@ -77,7 +77,9 @@ exclude overlapping runs and reject repeat attempts. It is not a physical verifi
 
 - GET / -> UI; embeds a per-process anti-CSRF token.
 - GET /status, GET /detect -> state and no-motion preview.
-- POST /proposals multipart schematic=<PDF/PNG/JPEG> -> one real Baseten call, awaiting_confirmation.
+- GET /nodes -> read-only Pi/conveyor health, connectivity and simulation status.
+- POST /proposals multipart schematic=<PDF/JPEG/PNG/BMP/TIFF> -> one real Baseten call, awaiting_confirmation.
+- POST /proposals multipart schematic=<SCH> -> local legacy KiCad/EAGLE parsing, awaiting_confirmation; no model needed.
 - POST /proposals {"bom":{"R3":2}} -> explicit manual proposal for API testing; same approval gate.
 - POST /proposals/<id>/approve {"approved":true,"bom":{"R3":2}} -> 202, starts once.
 - GET /proposals/<id> -> progress/result. States: awaiting_confirmation, running, complete,
@@ -86,6 +88,14 @@ exclude overlapping runs and reject repeat attempts. It is not a physical verifi
 
 Every browser POST requires X-HCP-UI-Token from the page. Run history is in-memory,
 bounded to 50 records; restarting the UI does not resume any run.
+
+Proposals retain the flat `bom` contract and preserve its insertion order. Optional review
+metadata includes `component_details` (original SCH type/value/quantity/refdes records),
+`warnings` for unmapped labels, and `llm_schematic_suggestions`. Despite that historical
+field name, these suggestions are deterministic rules, explicitly marked
+`suggestions_kind: "rule_based_advisory"`; they are not another LLM call. Advice is recomputed
+from the edited BOM on approval and is never executed. A source SCH record is not an approved
+motion instruction. Unconfigured types block approval rather than being silently dropped.
 
 ## Security and deployment
 

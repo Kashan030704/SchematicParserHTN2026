@@ -12,6 +12,8 @@ Start with the [complete architecture and hardware handoff](docs/ARCHITECTURE.md
 flowchart LR
     PDF[Schematic PDF or image] --> B[Baseten: proposed BOM]
     B --> G[Mac UI: edit and approve]
+    SCH[Legacy KiCad / EAGLE SCH] --> S[Local component parser]
+    S --> G
     D[Pi camera: tag IDs + pixel center/size] --> G
     D --> V[Pi: bounded image-based terminal approach]
     G --> C[Mac: frozen one-shot controller]
@@ -50,9 +52,10 @@ Detection counts tagged cups, **not individual components inside a cup**. Missin
 
 | File/module | Responsibility |
 | --- | --- |
-| `ingestion/parse.py`, `bom_schema.json` | Existing PDF/image rendering, updated thin BOM contract |
+| `ingestion/parse.py`, `sch.py`, `bom_schema.json` | PDF/image rendering, local SCH parsing, flat BOM validation |
 | `orchestrator/baseten_client.py`, `ingest.py` | One real structured-output call; credentials from environment |
-| `ui/app.py`, `ui/static/` | Editable BOM + detection preview, explicit approval, progress and stop |
+| `orchestrator/schematic_advice.py` | Advisory rules on parsed component data; never edits the BOM or dispatches motion |
+| `ui/app.py`, `ui/static/` | Multi-format upload, requested-parts cards, editable BOM + detection preview, approval, progress and stop |
 | `orchestrator/controller.py`, `nodes.py` | One-shot sequential execution; common no-retry HTTP client |
 | `actuator/motion.py` | EP plaintext command serialization, unit conversion, dwell and quit |
 | `actuator/perception.py` | Fresh video frame → tag36h11 IDs/counts + pixel corners/center/size |
@@ -117,10 +120,23 @@ export BASETEN_VISION_MODEL="<confirmed vision model slug>"
 python -m ui.app --config config.local.yaml --web-port 5002
 ```
 
-Open [localhost:5002](http://localhost:5002). Upload a PDF/PNG/JPEG, inspect the proposed BOM
-beside the simulated tag rollup, edit it, check the confirmation box, and approve.
+Open [localhost:5002](http://localhost:5002). Upload a PDF, JPEG, PNG, BMP, TIFF, or legacy
+KiCad/EAGLE XML `.sch` file. Inspect the proposed BOM beside the simulated tag rollup,
+edit it, check the confirmation box, and approve. The light-themed frontend displays
+requested quantities, node health, advisory checks, the ordered plan and live progress.
 Uploading and previewing never move either actuator. The UI does not fabricate a BOM if
 Baseten fails. A malformed response, 429, refusal or timeout is surfaced without auto-retry.
+
+PDF/images use one Baseten call. `.sch` files are parsed locally and do not need a model
+or API key; neither does the explicit manual-BOM input. The SCH parser preserves original
+type/value/refdes records for review and maps exact `type:value` cup labels, or complete
+sets of known reference labels, to the flat BOM. Unknown labels stay visible and block
+approval until the human maps them to configured cups. Modern `.kicad_sch` and hierarchical
+SCH designs are not supported.
+
+Schematic suggestions are **rule-based advisory checks**, not a second LLM call or an
+electrical-safety review. Values from SCH records support richer checks; flat cup labels
+without values support only limited advice. Suggestions never change the BOM or move hardware.
 
 `.env` is ignored but **not automatically loaded**. Do not put credentials in committed YAML.
 No tool-calling or audio model is required in this version. API capability/rate limits depend

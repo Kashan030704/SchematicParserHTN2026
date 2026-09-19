@@ -95,3 +95,32 @@ def test_stopped_gate_cannot_rearm(app):
     assert client.post("/stop", headers=headers(app)).status_code == 200
     assert client.post(f"/proposals/{identifier}/approve",
         json={"approved": True, "bom": {"R3": 1}}, headers=headers(app)).status_code == 409
+
+
+def test_health_and_status_are_read_only(app):
+    client = app.test_client()
+    assert client.get("/status").json["active_run"] is None
+    result = client.get("/nodes").json
+    assert set(result["nodes"]) == {"robomaster", "conveyor"}
+    assert all(node["connected"] for node in result["nodes"].values())
+    assert [event[:2] for event in app.events] == [("GET", "/health")] * 2
+
+
+def test_health_failure_is_visible_without_dispatching_stop():
+    controller, events = make_controller(fail="/health")
+    client = create_app(controller).test_client()
+    nodes = client.get("/nodes").json["nodes"]
+    assert all(not node["connected"] and "injected" in node["error"] for node in nodes.values())
+    assert [event[:2] for event in events] == [("GET", "/health")] * 2
+
+
+def test_proposal_preserves_human_order_and_edits_refresh_advice(app):
+    client = app.test_client()
+    response = proposal(app, {"LED_RX": 3, "R3": 2, "C1": 1})
+    assert list(response.json["bom"]) == ["LED_RX", "R3", "C1"]
+    assert any("LED_RX" in note for note in response.json["llm_schematic_suggestions"])
+    identifier = response.json["id"]
+    assert client.post(f"/proposals/{identifier}/approve",
+        json={"approved": True, "bom": {"R3": 1}}, headers=headers(app)).status_code == 202
+    result = eventually(lambda: (r if (r := client.get(f"/proposals/{identifier}").json)["state"] != "running" else None))
+    assert not any("LED_RX" in note for note in result["llm_schematic_suggestions"])

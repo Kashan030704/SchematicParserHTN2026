@@ -1,21 +1,83 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<meta name="hcp-token" content="{{UI_TOKEN}}">
-<title>Hardware Context Protocol</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><main><h1>Hardware Context Protocol</h1>
-<p>Schematic → proposed BOM → your approval → RoboMaster cup → conveyor.</p>
-<p class="warning">One representative cup per type, not per quantity. Camera-guided final alignment does not verify pickup or delivery.
-Keep a physical stop available. Before preview, position the robot at its calibrated observe station.</p>
-<form id="upload"><label>Schematic PDF / image <input type="file" name="schematic" accept=".pdf,.png,.jpg,.jpeg" required></label>
-<button>Extract BOM with Baseten</button></form>
-<p id="message" role="status"></p>
-<section class="columns"><div><h2>Proposed BOM — edit before approving</h2>
-<textarea id="bom" rows="14" spellcheck="false" aria-label="BOM JSON" placeholder='{"R3": 2, "C1": 1}'></textarea></div>
-<div><h2>Camera sees (tagged cups)</h2><pre id="detection">No detection requested.</pre>
-<button id="refresh">Refresh detection (no motion)</button></div></section>
-<p>Quantity is the number of parts needed. Camera count is visible cups/tags, not contents.</p>
-<label><input type="checkbox" id="confirm"> I checked the BOM, tag IDs, taught image target, clear paths, and fixed belt position.</label>
-<p><button id="approve" disabled>Approve and execute once</button>
-<button id="stop" class="stop">STOP BOTH NODES</button></p>
-<h2>Run progress</h2><pre id="progress">Waiting for a schematic.</pre>
-</main><script src="/static/app.js"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="hcp-token" content="{{UI_TOKEN}}">
+  <title>Hardware Context Protocol · Schematic to Fetch</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">SCHEMATIC TO FETCH / HCP</p>
+    <h1>Hardware Context Protocol</h1>
+    <p class="intro">Choose a circuit. Confirm its parts. Coordinate the robots.</p>
+    <p id="mode" role="status">Connecting to the backend…</p>
+    <section aria-label="Backend readiness">
+      <div id="nodes" class="nodes"></div>
+      <p class="warning">One representative cup per type, not per quantity. Camera-guided alignment does not verify grip or delivery.
+        Position RoboMaster at its taught observe station before preview; keep a physical stop available.</p>
+    </section>
+    <form id="run-form">
+      <label for="pdf">Schematic PDF, image, or SCH</label>
+      <input id="pdf" name="schematic" type="file" accept="application/pdf,image/jpeg,image/png,image/bmp,image/tiff,.pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.sch" aria-describedby="file-help">
+      <p id="file-help">PDF, JPEG, PNG, BMP, TIFF, or SCH (legacy KiCad / EAGLE XML). One file, up to 16 MiB; PDFs/images up to 8 pages. SCH files use component data directly without a Baseten call.</p>
+      <details id="bom-input">
+        <summary>Or paste an existing BOM JSON (no ingestion call)</summary>
+        <label for="bom-json">Type → quantity BOM</label>
+        <textarea id="bom-json" rows="6" spellcheck="false" placeholder='{"R3":2,"C1":1,"LED_RX":3}'></textarea>
+      </details>
+      <button id="run-button" type="submit">Create proposal — no motion</button>
+    </form>
+    <p id="message" role="status"></p>
+    <section id="confirmation" hidden aria-label="Human approval gate">
+      <h2>Review before motion</h2>
+      <div class="columns">
+        <div>
+          <label for="bom-edit">Edit the proposed type → quantity BOM</label>
+          <textarea id="bom-edit" rows="12" spellcheck="false"></textarea>
+        </div>
+        <div>
+          <h3>Camera sees (tagged cups)</h3>
+          <pre id="detection">No detection requested.</pre>
+          <button id="refresh" type="button">Refresh detection — no motion</button>
+        </div>
+      </div>
+      <p>Quantity is the number of parts needed. Camera count is visible tags/cups, not their contents.
+        Map unknown labels to your actual cup labels before approving.</p>
+      <label class="check"><input type="checkbox" id="confirm"> I checked the BOM, tag IDs, taught image target, clear paths, and fixed belt position.</label>
+      <button id="approve" type="button" disabled>Approve and execute once</button>
+    </section>
+    <button id="stop" class="stop" type="button">STOP BOTH NODES</button>
+    <section id="progress" aria-live="polite">
+      <h2 id="state">Ready for a schematic</h2>
+      <p id="step">Upload or paste a BOM. No motion starts until you approve.</p>
+      <section id="llm-suggestions-card" class="suggestions" aria-label="Schematic review suggestions">
+        <h3>Schematic suggestions</h3>
+        <p>Rule-based advisory checks on parsed BOM data (from Baseten, SCH, or manual input), not a separate LLM/netlist review. Never motor commands.</p>
+        <ul id="llm-suggestions"><li>Create a proposal to see available checks.</li></ul>
+      </section>
+      <progress id="count" value="0" max="1" aria-label="Completed cup commands"></progress>
+      <p id="quantities"></p>
+      <p id="error" role="alert"></p>
+      <ul id="warnings"></ul>
+      <section class="requested-parts" aria-label="Requested schematic parts">
+        <h3>Requested parts</h3>
+        <ul id="requested-parts"><li>Awaiting a proposed BOM.</li></ul>
+        <details id="component-details" hidden>
+          <summary>Original SCH component records (before any BOM edits)</summary>
+          <ul id="source-components"></ul>
+        </details>
+      </section>
+      <ol id="delivered"></ol>
+      <details><summary>BOM</summary><pre id="bom-result">Awaiting BOM</pre></details>
+      <details id="plan-details">
+        <summary>Ordered cup plan and execution events</summary>
+        <pre id="plan-result">No plan approved</pre>
+        <pre id="motion-events">No motion dispatched</pre>
+      </details>
+    </section>
+  </main>
+</body>
+</html>

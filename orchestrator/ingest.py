@@ -2,5 +2,5 @@
 from ingestion.parse import parse_schematic, validate_bom
 
 
-def ingest(path, client, part_types=()):
-    return parse_schematic(path, client, part_types=part_types)
+def ingest(path, client=None, part_types=(), *, details=False):
+    return parse_schematic(path, client, part_types=part_types, details=details)

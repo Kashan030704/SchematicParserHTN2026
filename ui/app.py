@@ -15,8 +15,9 @@ from flask import Flask, jsonify, request
 from werkzeug.exceptions import BadRequest, Conflict
 
 from config import load_yaml, load_tag_map
-from ingestion.parse import validate_bom, strict_json
+from ingestion.parse import validate_bom, strict_json, SCHEMATIC_EXTENSIONS, SCHEMATIC_FORMATS
 from orchestrator.ingest import ingest
+from orchestrator.schematic_advice import build_schematic_suggestions
 from orchestrator.controller import Controller
 from orchestrator.nodes import NodeClient
 from orchestrator.baseten_client import BasetenClient
@@ -24,6 +25,8 @@ from orchestrator.baseten_client import BasetenClient
 
 def create_app(controller, *, model_factory=BasetenClient, part_types=()):
     app = Flask(__name__, static_folder="static")
+    # Preserve the human-reviewed BOM order through proposal -> approval -> plan.
+    app.json.sort_keys = False
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
     app.config["UI_TOKEN"] = secrets.token_urlsafe(32)
     runs, lock = {}, threading.Lock()
@@ -49,8 +52,22 @@ def create_app(controller, *, model_factory=BasetenClient, part_types=()):
 
     @app.get("/status")
     def status():
+        with lock:
+            active = next((key for key, run in runs.items() if run["state"] == "running"), None)
         return jsonify(architecture="RoboMaster + conveyor HTTP", types=sorted(known),
-                       stopped=controller.cancelled.is_set(), physical_delivery_verified=False)
+                       stopped=controller.cancelled.is_set(), active_run=active,
+                       accepts_bom=True, physical_delivery_verified=False)
+
+    @app.get("/nodes")
+    def nodes():
+        # Health is read-only. Keep it separate from frequent local progress polls.
+        result = {}
+        for name, node in (("robomaster", controller.pi), ("conveyor", controller.conveyor)):
+            try:
+                result[name] = {"connected": True, **node.call("GET", "/health", timeout=2)}
+            except Exception as exc:
+                result[name] = {"connected": False, "error": str(exc)}
+        return jsonify(nodes=result)
 
     def preview():
         value = controller.pi.get("/detect")
@@ -66,6 +83,7 @@ def create_app(controller, *, model_factory=BasetenClient, part_types=()):
         with lock:
             if any(r["state"] == "running" for r in runs.values()):
                 raise Conflict("A run is active")
+        component_details = []
         if request.is_json:
             data = strict_json(request.get_data(as_text=True))
             if not isinstance(data, dict) or set(data) != {"bom"}:
@@ -74,15 +92,17 @@ def create_app(controller, *, model_factory=BasetenClient, part_types=()):
         else:
             upload = request.files.get("schematic")
             if not upload:
-                raise BadRequest("Upload a schematic PDF, PNG or JPEG")
+                raise BadRequest("Upload a " + SCHEMATIC_FORMATS + " schematic")
             suffix = Path(upload.filename or "").suffix.lower()
-            if suffix not in (".pdf", ".png", ".jpg", ".jpeg"):
-                raise BadRequest("Supported schematic formats: PDF, PNG, JPEG")
+            if suffix not in SCHEMATIC_EXTENSIONS:
+                raise BadRequest("Supported schematic formats: " + SCHEMATIC_FORMATS)
             with tempfile.TemporaryDirectory(prefix="hcp-ingest-") as folder:
                 path = Path(folder) / ("schematic" + suffix)
                 upload.save(path)
-                bom = ingest(path, model_factory(), part_types=sorted(known))
-            source = "baseten"
+                # SCH records are local data: no API key or model construction needed.
+                model = None if suffix == ".sch" else model_factory()
+                parsed = ingest(path, model, part_types=sorted(known), details=True)
+                bom, component_details, source = parsed["bom"], parsed["component_details"], parsed["source"]
         try:
             detection, detection_error = preview(), None
         except Exception as exc:
@@ -90,6 +110,11 @@ def create_app(controller, *, model_factory=BasetenClient, part_types=()):
         proposal_id = uuid.uuid4().hex
         run = {"id": proposal_id, "state": "awaiting_confirmation", "bom": bom, "source": source,
                "detection": detection, "detection_error": detection_error, "events": [],
+               "component_details": component_details,
+               "llm_schematic_suggestions": build_schematic_suggestions(
+                   {"components": component_details} if component_details else bom),
+               "suggestions_kind": "rule_based_advisory",
+               "warnings": ["No configured cup/tag mapping for: " + key for key in bom if key not in known],
                "physical_delivery_verified": False}
         with lock:
             # Bound in-memory history; never evict a running record.
@@ -121,7 +146,7 @@ def create_app(controller, *, model_factory=BasetenClient, part_types=()):
         bom = validate_bom(data["bom"])
         missing = sorted(set(bom) - known)
         if missing:
-            raise BadRequest("No tag/preset mapping for: " + ", ".join(missing))
+            raise BadRequest("No cup/tag mapping for: " + ", ".join(missing))
         with lock:
             if proposal_id not in runs:
                 raise BadRequest("Unknown proposal")
@@ -131,7 +156,10 @@ def create_app(controller, *, model_factory=BasetenClient, part_types=()):
                 raise Conflict("Proposal already used; approval cannot replay a run")
             if any(r["state"] == "running" for r in runs.values()):
                 raise Conflict("A run is active")
-            runs[proposal_id].update(state="running", bom=dict(bom))
+            run = runs[proposal_id]
+            advice_input = {"components": run["component_details"]} if bom == run["bom"] and run["component_details"] else bom
+            run.update(state="running", bom=dict(bom), warnings=[],
+                       llm_schematic_suggestions=build_schematic_suggestions(advice_input))
             threading.Thread(target=execute, args=(proposal_id, dict(bom)), daemon=True).start()
         return jsonify(id=proposal_id, state="running"), 202
 
