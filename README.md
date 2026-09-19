@@ -29,14 +29,15 @@ Copy `config/hardware.example.json` to ignored `config/hardware.json` and fill e
 
 ```sh
 export BASETEN_API_KEY='<CONFIRM>'
-export BASETEN_VISION_MODEL='<CONFIRM>'
-export BASETEN_TOOL_MODEL='<CONFIRM>'
+# Recommended current vision/tool-capable slug; verify availability in your catalog.
+export BASETEN_VISION_MODEL='moonshotai/Kimi-K2.6'
+export BASETEN_TOOL_MODEL='moonshotai/Kimi-K2.6'
 export HCP_HOST='<CONFIRM_PI_IP>'
 export HCP_PORT=9000
 export HARDWARE_CONFIG=config/hardware.json
 ```
 
-Choose a Baseten vision model supporting images and `response_format: json_schema`, and a reasoning model supporting Chat Completions tools. Requests use `https://inference.baseten.co/v1`, bounded 429 backoff, and local output validation. Unsupported features do not silently fall back to unstructured output. Voice/STT is P1 and has no P0 dependency.
+The default recommendation is `moonshotai/Kimi-K2.6`, which Baseten currently lists as vision-capable and which supports structured outputs and tool calling through the OpenAI-compatible endpoint. Requests use `https://inference.baseten.co/v1`, bounded 429 backoff, and local output validation. Rate limits are account-level, so run tests sequentially rather than in parallel; Baseten's default Basic-unverified limit is 15 requests/minute. Verify the slug and effective limits in your Baseten catalog before spending credits. Unsupported features do not silently fall back to unstructured output. Voice/STT is P1 and has no P0 dependency.
 
 | Area | Values to measure or confirm |
 | --- | --- |
