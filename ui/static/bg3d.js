@@ -21,6 +21,7 @@
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0xf3f5ef, 1);
+  scene.fog = new THREE.Fog(0xf3f5ef, 9, 26);
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.7));
   const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -145,6 +146,83 @@
   boardGroup.rotation.x = -0.55;
   boardGroup.position.y = -0.6;
 
+  // --- Ambient aesthetics around the board (not on it) -------------------
+
+  // Soft radial-glow sprite texture, reused for bokeh dots and LED halos.
+  function glowTexture(hexColor) {
+    const size = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, hexColor);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(c);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  // Drifting bokeh/solder-spark particles floating around the board at
+  // varying depths — purely atmospheric, gives the scene warmth and parallax.
+  const particleColors = ['rgba(216,178,92,0.9)', 'rgba(159,216,194,0.85)', 'rgba(255,255,255,0.8)'];
+  const PARTICLE_COUNT = 70;
+  const particles = [];
+  const particleGroup = new THREE.Group();
+  scene.add(particleGroup);
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    const color = particleColors[i % particleColors.length];
+    const scale = 0.12 + Math.random() * 0.3;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture(color), transparent: true, depthWrite: false, opacity: 0.55 + Math.random() * 0.35,
+    }));
+    sprite.scale.set(scale, scale, 1);
+    const radius = 5 + Math.random() * 8;
+    const angle = Math.random() * Math.PI * 2;
+    sprite.position.set(Math.cos(angle) * radius, Math.random() * 6 - 1.5, Math.sin(angle) * radius - 2);
+    particleGroup.add(sprite);
+    particles.push({ sprite, speed: 0.05 + Math.random() * 0.1, phase: Math.random() * Math.PI * 2, driftX: (Math.random() - 0.5) * 0.15 });
+  }
+
+  // A handful of small satellite PCB chips orbiting farther back, giving the
+  // scene depth/parallax without cluttering the main board.
+  function miniChip(color) {
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.55, 0.1, 0.32),
+      new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.6 })
+    );
+    group.add(body);
+    const led = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 12, 12),
+      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.4 })
+    );
+    led.position.set(0.18, 0.09, 0);
+    group.add(led);
+    group.userData.led = led;
+    return group;
+  }
+  const satellites = [];
+  const satelliteColors = [0xe0554a, 0x4ac9e0, 0xd8b25c];
+  satelliteColors.forEach((color, i) => {
+    const sat = miniChip(color);
+    const radius = 6.5 + i * 1.4;
+    sat.userData.radius = radius;
+    sat.userData.speed = 0.08 + i * 0.03;
+    sat.userData.phase = (i / satelliteColors.length) * Math.PI * 2;
+    sat.userData.height = 1.5 - i * 0.6;
+    scene.add(sat);
+    satellites.push(sat);
+  });
+
+  // Faint reference grid floor beneath everything, suggesting a lab bench.
+  const grid = new THREE.GridHelper(40, 40, 0xb9c9b4, 0xdbe4d6);
+  grid.position.y = -3.4;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.35;
+  scene.add(grid);
+
   let targetScroll = 0;
   let currentScroll = 0;
 
@@ -175,6 +253,25 @@
     boardGroup.position.y = -0.6 + currentScroll * 1.6;
     camera.position.x = Math.sin(currentScroll * Math.PI * 2) * 1.6;
     camera.lookAt(0, 0, 0);
+
+    if (!reduceMotion) {
+      particles.forEach(p => {
+        p.sprite.position.y += p.speed * 0.02;
+        p.sprite.position.x += Math.sin(t * 0.6 + p.phase) * p.driftX * 0.02;
+        if (p.sprite.position.y > 6.5) p.sprite.position.y = -3;
+      });
+      satellites.forEach(sat => {
+        const angle = t * sat.userData.speed + sat.userData.phase;
+        sat.position.set(
+          Math.cos(angle) * sat.userData.radius,
+          sat.userData.height + Math.sin(t * 0.5 + sat.userData.phase) * 0.4,
+          Math.sin(angle) * sat.userData.radius - 4
+        );
+        sat.rotation.y = -angle + Math.PI / 2;
+        const pulse = 0.9 + Math.sin(t * 2.2 + sat.userData.phase) * 0.6;
+        sat.userData.led.material.emissiveIntensity = Math.max(0.3, pulse);
+      });
+    }
 
     renderer.render(scene, camera);
   }
