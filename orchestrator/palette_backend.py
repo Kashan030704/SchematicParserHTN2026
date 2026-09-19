@@ -6,6 +6,7 @@ import threading
 from arm.sim_driver import SimDriver
 from executor import run_plan
 from ingestion.parse import parse_pdf
+from orchestrator.schematic_advice import build_schematic_suggestions
 from palette import MissingComponent
 from planner import bom_to_plan
 
@@ -41,7 +42,9 @@ class PaletteBackend:
             self.run_lock.release()
 
     def _prepare_bom(self, bom, update):
-        update(state="planning", step="Resolving fixed palette slots", bom=bom)
+        suggestions = build_schematic_suggestions(bom)
+        update(state="planning", step="Resolving fixed palette slots", bom=bom,
+               llm_schematic_suggestions=suggestions)
         self.palette.validate_all_angles_within_limits(self.config)
         # Bound untrusted HTTP/model quantities BEFORE planner expansion.
         components = bom.get("components") if isinstance(bom, dict) else None
@@ -70,15 +73,16 @@ class PaletteBackend:
         present_refs = [r for r in references if r is not None]
         if len(present_refs) != len(set(present_refs)):
             raise ValueError("BOM refdes must be unique")
-        return plan, references
+        return plan, references, suggestions
 
     def _run_bom(self, bom, update):
-        plan, references = self._prepare_bom(bom, update)
+        plan, references, suggestions = self._prepare_bom(bom, update)
         completed, events = [], deque(maxlen=80)
         motion_steps = 0
         update(state="running", step="Starting camera-free simulation", plan=plan.to_dict(),
                requested=len(plan.steps), available=len(plan.steps), delivered=[], warnings=[],
-               events=[], motion_steps=0, commanded_angles=dict(self.config.startup_angles))
+               llm_schematic_suggestions=suggestions, events=[], motion_steps=0,
+               commanded_angles=dict(self.config.startup_angles))
 
         def event_sink(event):
             nonlocal motion_steps
@@ -109,5 +113,6 @@ class PaletteBackend:
         driver = SimDriver(self.config, emit=None, event_sink=event_sink, record_commands=False)
         run_plan(plan, driver, on_progress=progress)
         return {"state": "complete", "delivered": completed, "warnings": [],
+                "llm_schematic_suggestions": suggestions,
                 "motion_steps": motion_steps, "events": list(events),
                 "commanded_angles": driver.commanded_angles, "physical_delivery_verified": False}

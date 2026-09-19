@@ -14,6 +14,16 @@ function list(id, values) {
   }));
 }
 
+function requestedParts(bom) {
+  if (!bom || !Array.isArray(bom.components)) return ['Awaiting parsed schematic parts.'];
+  return bom.components.map(part => {
+    const qty = part.qty ?? part.quantity ?? 1;
+    const refs = Array.isArray(part.refdes) && part.refdes.length ? `${part.refdes.join(', ')} — ` : '';
+    const name = part.component_id || [part.type, part.value].filter(Boolean).join(' ');
+    return `${refs}${name || 'unknown component'} × ${qty}`;
+  });
+}
+
 async function api(path, options) {
   const response = await fetch(path, options);
   const data = await response.json();
@@ -58,6 +68,10 @@ async function poll() {
       $('count').max = Math.max(1, run.requested || 1);
       $('count').value = run.delivered.length;
       list('warnings', run.warnings || []);
+      list('llm-suggestions', (run.llm_schematic_suggestions && run.llm_schematic_suggestions.length)
+        ? run.llm_schematic_suggestions
+        : ['No schematic suggestions were generated for this run.']);
+      list('requested-parts', requestedParts(run.bom));
       list('delivered', run.delivered.map(p => p.slot_id
         ? `${p.refdes ? p.refdes + ' — ' : ''}${p.component_id} from ${p.slot_id} (${p.simulated ? 'simulated' : 'commanded, NOT sensed'})`
         : `${p.refdes} — ${p.type} ${p.value}`));
@@ -74,6 +88,8 @@ async function poll() {
         ? (remote ? 'HCP palette node required; physical mode also needs local ARM/START on the Pi. Paste a BOM to begin.'
           : 'Upload a PDF or paste a BOM. Every arm move stays simulated.')
         : 'Arm, conveyor, and camera are required.';
+      list('llm-suggestions', ['Run a schematic to generate suggestions.']);
+      list('requested-parts', ['Run a schematic to identify requested parts.']);
     }
     $('run-button').disabled = !ready || activeRun !== null;
   } catch (error) {

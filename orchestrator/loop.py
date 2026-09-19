@@ -13,6 +13,7 @@ from hcp_host.envelope import message
 from hcp_host.registry import parameters
 from ingestion.parse import parse_pdf, validate_bom
 from orchestrator.runs import RunManager
+from orchestrator.schematic_advice import build_schematic_suggestions
 
 SYSTEM_PROMPT = """Deliver the requested schematic parts using the connected HCP tools.
 Inventory tags identify repeatable pickup bins, with one graspable part presented
@@ -99,11 +100,14 @@ class Orchestrator:
         holding, on_belt = None, None
         initialized, belt_stopped = False, False
         warnings = [f"Missing {p['quantity']} × {p['type']} {p['value']} ({', '.join(p['refdes'])})" for p in missing]
+        suggestions = build_schematic_suggestions(bom)
         self.host.publish_context(message("publish", "host", {"topic": "context/bom", "bom": bom}, ""))
         update(state="running", step="Checking nodes", bom=bom, warnings=warnings,
+               llm_schematic_suggestions=suggestions,
                requested=sum(p["quantity"] for p in bom["components"]), available=len(units), delivered=[])
         if not units:
-            return {"state": "incomplete" if missing else "complete", "warnings": warnings, "delivered": []}
+            return {"state": "incomplete" if missing else "complete", "warnings": warnings,
+                    "llm_schematic_suggestions": suggestions, "delivered": []}
         registry = self.host.registry.snapshot()
         for device, commands in {"arm": {"pick", "place", "home"}, "conveyor": {"advance", "stop"}, "camera": {"get_tags"}}.items():
             if device not in registry or not commands <= set(registry[device]["available_commands"]):
@@ -113,7 +117,8 @@ class Orchestrator:
         try:
             for _ in range(max(16, len(units) * 8 + 8)):
                 if not remaining and holding is None and on_belt is None:
-                    return {"state": "incomplete" if missing else "complete", "warnings": warnings, "delivered": delivered}
+                    return {"state": "incomplete" if missing else "complete", "warnings": warnings,
+                            "llm_schematic_suggestions": suggestions, "delivered": delivered}
                 tools, routes = registry_tools(self.host.registry.snapshot())
                 context = {"remaining": remaining, "holding": holding, "on_belt": on_belt, "delivered": delivered,
                            "initialized": initialized, "belt_stopped": belt_stopped, "missing": missing,

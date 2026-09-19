@@ -30,10 +30,21 @@
     <section id="progress" aria-live="polite">
       <h2 id="state">Connecting</h2>
       <p id="step">Checking backend mode…</p>
+      <section id="llm-suggestions-card" class="suggestions" aria-label="LLM schematic suggestions">
+        <h3>LLM suggestions about the schematic</h3>
+        <p>Generated from the parsed schematic/BOM as advisory checks, not commands.</p>
+        <ul id="llm-suggestions">
+          <li>Run a schematic to generate suggestions.</li>
+        </ul>
+      </section>
       <progress id="count" value="0" max="1" aria-label="Completed placements"></progress>
       <p id="quantities"></p>
       <p id="error" role="alert"></p>
       <ul id="warnings"></ul>
+      <section class="requested-parts" aria-label="Requested schematic parts">
+        <h3>Requested parts identified from schematic</h3>
+        <ul id="requested-parts"><li>Run a schematic to identify requested parts.</li></ul>
+      </section>
       <ol id="delivered"></ol>
       <details>
         <summary>BOM</summary>

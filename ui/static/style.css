@@ -6,6 +6,11 @@ main { max-width: 760px; margin: 7vh auto; padding: 24px; }
 h1 { font-size: clamp(2rem, 6vw, 3.4rem); letter-spacing: -.05em; margin-bottom: .3em; }
 .intro { font-size: 1.15rem; color: #54695d; }
 section, form { background: #fff; border: 1px solid #d6dfd3; border-radius: 12px; margin-top: 20px; padding: 24px; }
+.suggestions { background: #f7faf4; border-color: #c9d8c3; margin: 16px 0 20px; padding: 16px; }
+.suggestions h3 { margin: 0 0 8px; }
+.suggestions p { color: #54695d; margin-top: 0; }
+.requested-parts { background: #fbfcf8; margin: 16px 0; padding: 16px; }
+.requested-parts h3 { margin: 0 0 8px; }
 .nodes { display: flex; flex-wrap: wrap; gap: 12px; }
 .node { padding: 6px 12px; background: #edf2eb; border-radius: 20px; }
 .offline { color: #865447; background: #f9eeea; }

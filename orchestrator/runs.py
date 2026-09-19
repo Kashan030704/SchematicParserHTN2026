@@ -24,7 +24,9 @@ class RunManager:
                 raise RuntimeError("A run is already active")
             run_id = uuid.uuid4().hex
             self.active = run_id
-            self.runs[run_id] = {**self.metadata, "id": run_id, "state": "queued", "step": "Queued", "warnings": [], "delivered": [], "simulation": simulation}
+            self.runs[run_id] = {**self.metadata, "id": run_id, "state": "queued", "step": "Queued",
+                                 "warnings": [], "llm_schematic_suggestions": [],
+                                 "delivered": [], "simulation": simulation}
             threading.Thread(target=self._run, args=(run_id, source, kind), daemon=True).start()
             return run_id
 

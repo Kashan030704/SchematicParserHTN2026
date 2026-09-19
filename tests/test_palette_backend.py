@@ -39,6 +39,7 @@ def test_fixture_pdf_through_flask_to_five_slewed_picks(tmp_path):
     assert all(p["simulated"] for p in result["delivered"])
     assert result["requested"] == 5 and result["motion_steps"] > 100
     assert result["physical_delivery_verified"] is False
+    assert any("decoupling" in item for item in result["llm_schematic_suggestions"])
     assert len(result["events"]) <= 80
     assert [e["command"] for e in result["events"][-2:]] == ["relax", "close"]
     assert client.get("/api/status").json["active_run"] is None
@@ -114,6 +115,18 @@ def test_missing_component_fails_whole_run_before_driver(tmp_path, monkeypatch):
     assert result["state"] == "failed" and result["delivered"] == []
     assert "diode:missing" in result["error"] and result["warnings"]
     assert not opened
+
+
+def test_schematic_suggestions_warn_about_low_resistance_short_risk():
+    from orchestrator.schematic_advice import build_schematic_suggestions
+
+    suggestions = build_schematic_suggestions({"components": [
+        {"type": "resistor", "value": "0R", "quantity": 1, "refdes": ["R1"]},
+        {"type": "ic", "value": "NE555", "quantity": 1, "refdes": ["U1"]},
+    ]})
+    assert suggestions[0].startswith("These are advisory checks")
+    assert any("short" in suggestion and "R1" in suggestion for suggestion in suggestions)
+    assert any("0.1uF" in suggestion and "U1" in suggestion for suggestion in suggestions)
 
 
 @pytest.mark.parametrize("bom", [

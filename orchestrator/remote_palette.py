@@ -52,7 +52,7 @@ class RemotePaletteBackend(PaletteBackend):
             raise ValueError("Palette fingerprint mismatch: backend and arm node must use the same palette")
 
     def _run_bom(self, bom, update):
-        plan, references = self._prepare_bom(bom, update)
+        plan, references, suggestions = self._prepare_bom(bom, update)
         # Resolve EVERY part before contacting the arm or beginning a session.
         state = self._command("get_state")
         self._validate_state(state)
@@ -70,7 +70,8 @@ class RemotePaletteBackend(PaletteBackend):
         begun = False
         update(state="running", step="Beginning HCP palette session", plan=plan.to_dict(),
                requested=len(plan.steps), available=len(plan.steps), delivered=[], warnings=[],
-               session_id=run_id, events=[], motion_steps=0, commanded_angles=state.get("commanded_angles", {}))
+               llm_schematic_suggestions=suggestions, session_id=run_id, events=[], motion_steps=0,
+               commanded_angles=state.get("commanded_angles", {}))
 
         def heartbeat():
             while not stop.wait(min(0.5, lease / 3)):
@@ -112,6 +113,7 @@ class RemotePaletteBackend(PaletteBackend):
             final = self._command("end_run", {"run_id": run_id}, timeout=timeout)
             begun = False
             return {"state": "complete", "delivered": completed, "warnings": [],
+                    "llm_schematic_suggestions": suggestions,
                     "commanded_angles": final.get("commanded_angles", {}),
                     "motion_steps": final.get("motion_steps", 0), "physical_delivery_verified": False}
         finally:
