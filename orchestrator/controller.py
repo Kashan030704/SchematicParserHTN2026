@@ -1,34 +1,27 @@
 """Approved BOM -> one frozen, sequential cup plan. No replanning or motion retry."""
 import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
 from ingestion.parse import validate_bom
 from config import number
 
 
 class Controller:
-    def __init__(self, pi, conveyor, *, advance_seconds=3):
-        self.pi, self.conveyor = pi, conveyor
-        self.advance_seconds = number(advance_seconds, "advance_seconds", 0.1, 30)
+    def __init__(self, pi):
+        self.pi = pi
         self.lock = threading.Lock()
         self.cancelled = threading.Event()
         self.last_stop_errors = []
 
     def stop(self):
         self.cancelled.set()
-        def stop_one(node, path):
-            try:
-                result = node.call("POST", path, {}, timeout=5)
-                if result.get("ok") is not True:
-                    raise RuntimeError("Stop was not acknowledged")
-            except Exception as exc:
-                return str(exc)
-        # Belt stop must not wait for an unreachable Pi, or vice versa.
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(stop_one, self.pi, "/estop"),
-                       pool.submit(stop_one, self.conveyor, "/stop")]
-            self.last_stop_errors = [error for future in futures if (error := future.result())]
+        self.last_stop_errors = []
+        try:
+            result = self.pi.call("POST", "/estop", {}, timeout=5)
+            if result.get("ok") is not True:
+                raise RuntimeError("Stop was not acknowledged")
+        except Exception as exc:
+            self.last_stop_errors = [str(exc)]
         return self.last_stop_errors
 
     def _check(self):
@@ -68,9 +61,6 @@ class Controller:
                     raise RuntimeError("Pi did not confirm the full ordered drop log")
                 if "approach" in drop:
                     progress({"op": "approach_result", "type": part_type, "detail": drop["approach"]})
-                self._check()
-                progress({"op": "advance", "type": part_type})
-                self._ok(self.conveyor.post("/advance", {"seconds": self.advance_seconds}))
                 self._check()
                 returned = self.pi.post("/return", {"run_id": run_id, "type": part_type})
                 self._ok(returned)

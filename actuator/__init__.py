@@ -1,1 +1,1 @@
-"""Arm and belt runtimes sharing a single Arduino connection."""
+"""RoboMaster EP motion, perception, and approved cup collection."""

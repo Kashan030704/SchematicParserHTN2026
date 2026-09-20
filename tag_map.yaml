@@ -1,5 +1,30 @@
 family: tag36h11
 tags:
-  0: R3
-  1: C1
-  2: LED_RX
+  0: resistors
+  2: capacitors
+  6: integrated circuits
+  7: motors
+  1: inductors
+  5: custom printed circuit boards
+  8: diodes/LED
+
+# These definitions are supplied to the classifier. The robot uses only tags above.
+groups:
+  resistors:
+    description: Resistive components, including fixed resistors, resistor networks, potentiometers, rheostats, and thermistors.
+  capacitors:
+    description: Capacitive components, including ceramic, electrolytic, tantalum, film, variable capacitors, and supercapacitors.
+  integrated circuits:
+    description: Individual IC packages, such as logic chips, amplifiers, timers, regulators, processors, memory, and driver ICs. A complete board or breakout module belongs with printed circuit boards instead.
+  motors:
+    description: Electric motors and motor assemblies, including DC, AC, brushless, stepper, servo motors, and motorized fans. Motor driver chips are integrated circuits, not motors.
+  inductors:
+    description: Magnetic inductive components, including inductors, chokes, ferrite beads, and transformer windings. Complete electric motors belong with motors.
+  custom printed circuit boards:
+    description: Complete bare or assembled printed circuit boards, custom PCBs, breakout boards, and board-level modules. An individual chip is an integrated circuit, not a board.
+  diodes/LED:
+    description: Diodes and light-emitting diodes, including signal, rectifier, Schottky, Zener, TVS, photodiodes, LED packages, and diode arrays.
+
+# All entries must be assigned once. Unnatural or ambiguous matches are flagged.
+classification:
+  policy: closest

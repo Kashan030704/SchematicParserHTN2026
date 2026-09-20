@@ -159,7 +159,7 @@ class VisualApproach:
             timer.join(timeout=1)
 
     def pick(self, part_type, tag_id):
-        """One approved pick. Undo successful approach legs before the existing belt route."""
+        """One approved pick. Undo successful approach legs before the collection route."""
         self.history, self.last_report = [], None
         if tag_id not in self.robot.poses["coarse_routes"]:
             raise ApproachError(f"No coarse route configured for tag {tag_id}")
@@ -176,7 +176,7 @@ class VisualApproach:
             self._check()
             self.robot.grasp(part_type)  # Exactly one common, scripted arm/gripper sequence.
             # All approach legs are translations at a fixed heading. Reverse their order
-            # and signs so conveyor_wp still starts at the commanded observe station.
+            # and signs so collection_wp still starts at the commanded observe station.
             # This is commanded dead-reckoning, not a measured or verified return.
             for leg in reversed(self.history):
                 self._check()

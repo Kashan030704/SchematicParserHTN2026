@@ -1,4 +1,4 @@
-"""Pi HTTP node. Drop and return are separate so the Mac owns belt ordering."""
+"""Pi HTTP node for approved cup collection and return to observe."""
 import threading
 import time
 from contextlib import contextmanager
@@ -84,7 +84,7 @@ class RobotNode:
             self.current_type, self.state = part_type, "moving"
             steps = []
             for op, action in (("grasp", lambda: self.approach.pick(part_type, self.tag_ids[part_type])),
-                               ("drive", self.robot.to_conveyor), ("drop", self.robot.drop)):
+                               ("drive", self.robot.to_collection), ("drop", self.robot.drop)):
                 try:
                     action()
                     if self.robot.stopped.is_set():

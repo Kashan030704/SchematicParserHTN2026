@@ -101,9 +101,9 @@ def test_health_and_status_are_read_only(app):
     client = app.test_client()
     assert client.get("/status").json["active_run"] is None
     result = client.get("/nodes").json
-    assert set(result["nodes"]) == {"robomaster", "conveyor"}
+    assert set(result["nodes"]) == {"robomaster"}
     assert all(node["connected"] for node in result["nodes"].values())
-    assert [event[:2] for event in app.events] == [("GET", "/health")] * 2
+    assert [event[:2] for event in app.events] == [("GET", "/health")]
 
 
 def test_health_failure_is_visible_without_dispatching_stop():
@@ -111,7 +111,7 @@ def test_health_failure_is_visible_without_dispatching_stop():
     client = create_app(controller).test_client()
     nodes = client.get("/nodes").json["nodes"]
     assert all(not node["connected"] and "injected" in node["error"] for node in nodes.values())
-    assert [event[:2] for event in events] == [("GET", "/health")] * 2
+    assert [event[:2] for event in events] == [("GET", "/health")]
 
 
 def test_proposal_preserves_human_order_and_edits_refresh_advice(app):

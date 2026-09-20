@@ -1,0 +1,11 @@
+# Local prototype: start the simulated RoboMaster node using the README commands first.
+# Command demo mode is a limited grammar, NOT an LLM, and does not itself simulate nodes.
+pi: {base_url: "http://127.0.0.1:8081"}
+baseten:
+  url: "https://inference.baseten.co/v1"
+  model: null
+  command_model: null
+  api_key_env: BASETEN_API_KEY
+tag_map: tag_map.yaml
+node_token_env: HCP_NODE_TOKEN
+command_mode: demo

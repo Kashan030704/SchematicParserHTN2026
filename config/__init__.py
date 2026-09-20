@@ -47,6 +47,35 @@ def load_tag_map(path):
     return tags
 
 
+def load_group_catalog(path):
+    """Optional classification metadata; old exact-label tag maps still work."""
+    data = load_yaml(path)
+    if "groups" not in data:
+        return None
+    tags = load_tag_map(path)
+    groups = data["groups"]
+    if not isinstance(groups, dict) or set(groups) != set(tags.values()):
+        raise ValueError("Group definitions must exactly match the registered tag labels")
+    catalog = []
+    for tag_id, name in tags.items():
+        entry = groups[name]
+        if (not isinstance(entry, dict) or set(entry) != {"description"}
+                or not isinstance(entry["description"], str) or not 1 <= len(entry["description"].strip()) <= 2000):
+            raise ValueError(f"Group {name} requires a nonempty description")
+        catalog.append({"name": name, "tag_id": tag_id, "description": entry["description"].strip()})
+    settings = data.get("classification", {"policy": "closest"})
+    if not isinstance(settings, dict) or settings.get("policy") not in {"closest", "fallback"}:
+        raise ValueError("Classification policy must be closest or fallback")
+    if set(settings) - {"policy", "fallback_group"}:
+        raise ValueError("Unknown classification setting")
+    fallback = settings.get("fallback_group")
+    if settings["policy"] == "fallback" and fallback not in groups:
+        raise ValueError("fallback_group must be a registered group")
+    if settings["policy"] == "closest" and fallback is not None:
+        raise ValueError("Closest-group classification does not use a fallback_group")
+    return {"groups": catalog, **settings}
+
+
 def load_poses(path, *, hardware=False):
     data = load_yaml(path)
     if data.get("arm_units") != "mm":
@@ -63,7 +92,7 @@ def load_poses(path, *, hardware=False):
         arm(data.get(name), name)
     if "grab_poses" in data:
         raise ValueError("Retired grab_poses: use one scripted grab_pose after visual alignment")
-    for name in ("conveyor_wp", "home_wp"):
+    for name in ("collection_wp", "home_wp"):
         wp = data.get(name, {}).get("chassis", {})
         if set(wp) != {"x_m", "y_m", "z_deg"}:
             raise ValueError(f"{name} requires chassis: {{x_m, y_m, z_deg}}")
@@ -77,7 +106,6 @@ def load_poses(path, *, hardware=False):
         number(data.get(name), name, 0.1, 120)
     number(data.get("chassis_speed_mps"), "chassis_speed_mps", 0.01, 0.5)
     number(data.get("chassis_speed_dps"), "chassis_speed_dps", 1, 45)
-    number(data.get("advance_seconds", 3), "advance_seconds", 0.1, 30)
     validate_visual_approach(data, hardware=hardware)
     return data
 

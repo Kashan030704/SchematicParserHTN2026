@@ -4,41 +4,80 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="hcp-token" content="{{UI_TOKEN}}">
-  <title>Hardware Context Protocol · Schematic to Fetch</title>
+  <title>Schematic to Fetch</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/vendor/three-r128.min.js" defer></script>
   <script src="/static/bg3d.js" defer></script>
   <script src="/static/app.js" defer></script>
+  <script src="/static/commands.js" defer></script>
 </head>
 <body>
   <canvas id="bg-canvas" aria-hidden="true"></canvas>
   <main>
-    <p class="eyebrow">SCHEMATIC TO FETCH / HCP</p>
-    <h1>Hardware Context Protocol</h1>
-    <p class="intro">Choose a circuit. Confirm its parts. Coordinate the robots.</p>
+    <p class="eyebrow">BENCH / P0</p>
+    <h1>Schematic to Fetch</h1>
+    <p class="intro">Choose a circuit. Confirm its parts. Let RoboMaster collect them.</p>
     <p id="mode" role="status">Connecting to the backend…</p>
     <section aria-label="Backend readiness">
       <div id="nodes" class="nodes"></div>
+      <details id="registered-groups" hidden>
+        <summary>Registered AprilTag groups · tag36h11</summary>
+        <ul id="group-catalog"></ul>
+      </details>
       <p class="warning">One representative cup per type, not per quantity. Camera-guided alignment does not verify grip or delivery.
         Position RoboMaster at its taught observe station before preview; keep a physical stop available.</p>
+    </section>
+    <section aria-labelledby="command-heading">
+      <h2 id="command-heading">Request parts — text or voice</h2>
+      <p id="command-mode">Loading command capabilities…</p>
+      <p>Try “fetch resistors and capacitors”, “run this BOM”, “what cups can you see?”, or “stop”.
+        Motion requests only prepare a proposal. Review it and click Approve below.</p>
+      <form id="command-form">
+        <label for="command-text">Request / recognized transcript</label>
+        <textarea id="command-text" rows="2" maxlength="2000" placeholder="Fetch resistors and capacitors"></textarea>
+        <button id="command-send" type="submit">Interpret request</button>
+        <label class="check"><input id="voice-consent" type="checkbox"> Enable microphone. My browser's speech service may send audio to its provider; interpreted text goes to Baseten in LLM mode.</label>
+        <button id="voice-talk" type="button" disabled aria-pressed="false">Hold to talk</button>
+        <p id="voice-state" role="status">Checking speech support. Typing always works.</p>
+      </form>
+      <p id="command-message" role="status"></p>
+      <p id="command-error" role="alert"></p>
+      <details><summary>Interpreted action / read-only result</summary><pre id="command-result">No request yet.</pre></details>
+      <p class="warning">Voice is not an emergency-stop circuit. Use STOP ROBOT or a physical stop if needed.
+        No always-on listening; no automatic restart after a stop.</p>
     </section>
     <form id="run-form">
       <label for="pdf">Schematic PDF, image, or SCH</label>
       <input id="pdf" name="schematic" type="file" accept="application/pdf,image/jpeg,image/png,image/bmp,image/tiff,.pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.sch" aria-describedby="file-help">
-      <p id="file-help">PDF, JPEG, PNG, BMP, TIFF, or SCH (legacy KiCad / EAGLE XML). One file, up to 16 MiB; PDFs/images up to 8 pages. SCH files use component data directly without a Baseten call.</p>
+      <p id="file-help">PDF, JPEG, PNG, BMP, TIFF, or SCH (legacy KiCad / EAGLE XML). One file, up to 16 MiB; PDFs/images up to 8 pages. Components are classified into your registered groups. SCH extraction is local; its grouping uses the model.</p>
       <details id="bom-input">
-        <summary>Or paste an existing BOM JSON (no ingestion call)</summary>
-        <label for="bom-json">Type → quantity BOM</label>
-        <textarea id="bom-json" rows="6" spellcheck="false" placeholder='{"R3":2,"C1":1,"LED_RX":3}'></textarea>
+        <summary>Or paste a component or grouped BOM JSON</summary>
+        <label for="bom-json">Component or group → quantity BOM</label>
+        <textarea id="bom-json" rows="6" spellcheck="false" placeholder='{"resistors":2,"capacitors":1,"diodes/LED":3}'></textarea>
+        <p>Raw component labels use LLM classification. Exact registered group names work without a model call.</p>
       </details>
       <button id="run-button" type="submit">Create proposal — no motion</button>
     </form>
     <p id="message" role="status"></p>
     <section id="confirmation" hidden aria-label="Human approval gate">
       <h2>Review before motion</h2>
-      <div class="columns">
+      <p id="action-summary"></p>
+      <section id="classification-card" hidden aria-label="Component classification">
+        <h3>Components → registered groups</h3>
+        <p id="classification-method"></p>
+        <p id="classification-error" role="alert" hidden></p>
+        <p id="classification-stale" class="warning" hidden>The grouped BOM has been edited. The assignments below show the original classification; check your corrected totals before approving.</p>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Extracted component</th><th>Quantity</th><th>Group / tag</th><th>Confidence / reason</th></tr></thead>
+            <tbody id="classification-rows"></tbody>
+          </table>
+        </div>
+        <details><summary>Original extracted/input JSON</summary><pre id="raw-bom-result"></pre></details>
+      </section>
+      <div class="columns" id="bom-review">
         <div>
-          <label for="bom-edit">Edit the proposed type → quantity BOM</label>
+          <label for="bom-edit">Edit the proposed group → quantity BOM</label>
           <textarea id="bom-edit" rows="12" spellcheck="false"></textarea>
         </div>
         <div>
@@ -48,25 +87,35 @@
         </div>
       </div>
       <p>Quantity is the number of parts needed. Camera count is visible tags/cups, not their contents.
-        Map unknown labels to your actual cup labels before approving.</p>
-      <label class="check"><input type="checkbox" id="confirm"> I checked the BOM, tag IDs, taught image target, clear paths, and fixed belt position.</label>
+        Check uncertain assignments and group totals before approving. One cup is collected per group.</p>
+      <label class="check"><input type="checkbox" id="confirm"> <span id="confirm-text">I checked the BOM, tag IDs, taught image target, clear paths, and collection point.</span></label>
       <button id="approve" type="button" disabled>Approve and execute once</button>
     </section>
-    <button id="stop" class="stop" type="button">STOP BOTH NODES</button>
+    <button id="stop" class="stop" type="button">STOP ROBOT</button>
     <section id="progress" aria-live="polite">
       <h2 id="state">Ready for a schematic</h2>
       <p id="step">Upload or paste a BOM. No motion starts until you approve.</p>
-      <section id="llm-suggestions-card" class="suggestions" aria-label="Schematic review suggestions">
-        <h3>Schematic suggestions</h3>
-        <p>Rule-based advisory checks on parsed BOM data (from Baseten, SCH, or manual input), not a separate LLM/netlist review. Never motor commands.</p>
-        <ul id="llm-suggestions"><li>Create a proposal to see available checks.</li></ul>
+      <section id="llm-suggestions-card" class="suggestions" aria-label="LLM schematic suggestions">
+        <h3>LLM suggestions about the schematic</h3>
+        <p>Possible shorts, component damage, and checks to make before powering your circuit.</p>
+        <p id="review-summary">Upload a PDF or image to get a vision review alongside your parts list.</p>
+        <p id="review-error" role="status" hidden></p>
+        <p id="review-stale" class="warning" hidden>The BOM has changed. These findings refer to the original uploaded schematic; the edited BOM has not been reviewed.</p>
+        <div id="review-findings"></div>
+        <ul id="review-limitations"></ul>
+        <p id="review-cost-note" hidden>Cost ranges are illustrative parts-only estimates in CAD, not supplier quotes or guaranteed losses. Labor, tax, shipping, and downstream equipment are excluded. Findings can overlap; do not add their costs together. An empty review does not establish that the circuit is safe.</p>
+        <details open>
+          <summary>Local component checks</summary>
+          <p>Additional rules based on component values. SCH and manual BOM inputs use these checks without a model call; upload an image or PDF for a review of the wiring.</p>
+          <ul id="llm-suggestions"><li>Create a proposal to see available checks.</li></ul>
+        </details>
       </section>
       <progress id="count" value="0" max="1" aria-label="Completed cup commands"></progress>
       <p id="quantities"></p>
       <p id="error" role="alert"></p>
       <ul id="warnings"></ul>
       <section class="requested-parts" aria-label="Requested schematic parts">
-        <h3>Requested parts</h3>
+        <h3>Requested groups</h3>
         <ul id="requested-parts"><li>Awaiting a proposed BOM.</li></ul>
         <details id="component-details" hidden>
           <summary>Original SCH component records (before any BOM edits)</summary>
@@ -74,7 +123,7 @@
         </details>
       </section>
       <ol id="delivered"></ol>
-      <details><summary>BOM</summary><pre id="bom-result">Awaiting BOM</pre></details>
+      <details><summary>BOM — quantities and AprilTag IDs</summary><pre id="bom-result">Awaiting BOM</pre></details>
       <details id="plan-details">
         <summary>Ordered cup plan and execution events</summary>
         <pre id="plan-result">No plan approved</pre>

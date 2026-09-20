@@ -24,12 +24,11 @@ def main(argv=None):
             raise ValueError("No cup mapping for: " + ", ".join(missing))
         print("DRY RUN ONLY — one cup per type, no socket/camera/hardware or Baseten call.")
         print("Ordered plan:", json.dumps([{"type": part, "quantity_needed": qty,
-              "ops": ["detect", "grasp", "drive", "drop", "advance", "return", "observe"]}
+              "ops": ["detect", "grasp", "drive", "drop", "return", "observe"]}
              for part, qty in bom.items()], indent=2))
         from actuator.motion import Robot
         from actuator.perception import DryRunPerception
         from actuator.server import RobotNode, create_app as robot_app
-        from actuator.conveyor_node import create_app as belt_app
         from orchestrator.controller import Controller
         class InProcessClient:
             def __init__(self, app):
@@ -48,8 +47,7 @@ def main(argv=None):
         robot.connect()
         try:
             node = RobotNode(robot, DryRunPerception(tags, robot), tags, at_observe=True)
-            controller = Controller(InProcessClient(robot_app(node)), InProcessClient(belt_app()),
-                                    advance_seconds=poses["advance_seconds"])
+            controller = Controller(InProcessClient(robot_app(node)))
             result = controller.run(bom, approved=True, progress=lambda e: print(json.dumps(e)))
             print(json.dumps(result, indent=2))
         finally:

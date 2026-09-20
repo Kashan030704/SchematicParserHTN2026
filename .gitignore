@@ -8,9 +8,7 @@ instance/
 config/hardware.json
 config/so100.json
 palette.local.yaml
-firmware/pins.h
 config.local.yaml
 poses.local.yaml
 tag_map.local.yaml
-firmware/secrets.h
 *.egg-info/

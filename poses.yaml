@@ -5,11 +5,15 @@ observe_pose: {arm: {x: 0, y: 0}}
 grab_pose: {arm: {x: 0, y: 0}}  # Same scripted grip after image alignment.
 # Coarse dead-reckoning from observe toward each tag; [] means already near it.
 # Translation only, fixed heading. Successful picks retrace these + visual steps
-# before the existing observe -> conveyor route. Never retreat automatically on error.
+# before the observe -> collection route. Never retreat automatically on error.
 coarse_routes:
   0: []
   1: []
   2: []
+  5: []
+  6: []
+  7: []
+  8: []
 visual_approach:
   taught: false  # Confirm a graspable image setpoint and both motion signs locally.
   frame_width: 640
@@ -37,7 +41,7 @@ visual_approach:
   timeout_s: 45
   min_improvement_px: 0.5
   max_stalled_steps: 3
-conveyor_wp: {chassis: {x_m: 0, y_m: 0, z_deg: 0}}
+collection_wp: {chassis: {x_m: 0, y_m: 0, z_deg: 0}}
 drop_pose: {arm: {x: 0, y: 0}}
 home_wp: {chassis: {x_m: 0, y_m: 0, z_deg: 0}}
 gripper_level: 1
@@ -47,4 +51,3 @@ gripper_settle_s: 1
 chassis_settle_s: 1
 chassis_speed_mps: 0.1
 chassis_speed_dps: 15
-advance_seconds: 3

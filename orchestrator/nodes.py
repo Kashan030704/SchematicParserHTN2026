@@ -1,4 +1,4 @@
-"""Identical HTTP transport for Pi and conveyor. No automatic command retries."""
+"""HTTP transport for the RoboMaster Pi node. No automatic command retries."""
 import json
 import urllib.error
 import urllib.parse

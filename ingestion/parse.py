@@ -48,7 +48,9 @@ def component_records_to_bom(records, part_types=()):
     return validate_bom(bom)
 
 
-def parse_schematic(path, client=None, *, part_types=(), details=False):
+def parse_schematic(path, client=None, *, part_types=(), details=False, review=False):
+    if review and not details:
+        raise ValueError("Schematic review requires details=True")
     suffix = Path(path).suffix.lower()
     if suffix not in SCHEMATIC_EXTENSIONS:
         raise ValueError("Provide a " + SCHEMATIC_FORMATS + " schematic")
@@ -71,7 +73,18 @@ def parse_schematic(path, client=None, *, part_types=(), details=False):
             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
             images.append("data:image/png;base64," + base64.b64encode(pixmap.tobytes("png")).decode())
     bom = validate_bom(client.extract_bom(images, BOM_SCHEMA, part_types=part_types))
-    return {"bom": bom, "component_details": [], "source": "baseten"} if details else bom
+    if not details:
+        return bom
+    result = {"bom": bom, "component_details": [], "source": "baseten"}
+    if review:
+        from ingestion.review import validate_review
+        try:
+            # Reuse the rendered pages. A failed advisory call must not discard a valid BOM.
+            result["schematic_review"] = validate_review(client.review_schematic(images, dict(bom)))
+            result["schematic_review_model"] = getattr(client, "vision_model", None)
+        except Exception as exc:
+            result["schematic_review_error"] = str(exc)[:1200]
+    return result
 
 
 # Kept for callers of the existing ingestion entry point.

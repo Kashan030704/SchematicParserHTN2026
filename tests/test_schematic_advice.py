@@ -52,3 +52,6 @@ def test_incoming_frontend_features_keep_approval_and_stop_controls():
     assert ".sch" in page and "TIFF" in page and "no motion" in page
     assert "{{UI_TOKEN}}" not in page
     assert "SG90" not in page
+    assert "<title>Schematic to Fetch</title>" in page
+    assert "<h1>Schematic to Fetch</h1>" in page
+    assert "Hardware Context Protocol" not in page and "Ask HCP" not in page

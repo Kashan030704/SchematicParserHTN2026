@@ -36,9 +36,9 @@ def test_oversized_unterminated():
 
 def test_generated_clients_discover_late_nodes_and_do_not_fake_success(host, tmp_path):
     arm = load_client("arm", "127.0.0.1", host.port, tmp_path).start()
-    belt = load_client("conveyor", "127.0.0.1", host.port, tmp_path).start()
+    sensor = load_client("sensor", "127.0.0.1", host.port, tmp_path).start()
     try:
-        eventually(lambda: set(host.registry.snapshot()) == {"arm", "conveyor"})
+        eventually(lambda: set(host.registry.snapshot()) == {"arm", "sensor"})
         with pytest.raises(RuntimeError, match="No hardware handler"):
             host.command("arm", "home").result(3)
         camera = load_client("camera", "127.0.0.1", host.port, tmp_path).start()
@@ -48,7 +48,7 @@ def test_generated_clients_discover_late_nodes_and_do_not_fake_success(host, tmp
             camera.stop()
     finally:
         arm.stop()
-        belt.stop()
+        sensor.stop()
 
 
 def test_ack_is_not_completion_and_context_flows_during_handler(host, tmp_path):

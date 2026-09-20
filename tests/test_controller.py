@@ -25,15 +25,15 @@ class NodeStub:
 
 def make_controller(fail=None, absent=()):
     events = []
-    pi, belt = NodeStub(events, fail=fail, absent=absent), NodeStub(events, fail=fail)
-    return Controller(pi, belt), events
+    pi = NodeStub(events, fail=fail, absent=absent)
+    return Controller(pi), events
 
 
-def test_one_cup_per_type_ordered_drop_belt_then_return():
+def test_one_cup_per_type_ordered_drop_then_return():
     controller, events = make_controller()
     result = controller.run({"R3": 2, "C1": 1, "LED_RX": 3}, approved=True)
     paths = [event[1] for event in events]
-    assert paths == ["/begin"] + ["/detect", "/grasp_place", "/advance", "/return"] * 3 + ["/end"]
+    assert paths == ["/begin"] + ["/detect", "/grasp_place", "/return"] * 3 + ["/end"]
     assert result["cups_commanded"] == ["R3", "C1", "LED_RX"]
     assert result["physical_delivery_verified"] is False
 
@@ -51,24 +51,22 @@ def test_absent_type_flagged_skipped_not_replanned():
     assert result["state"] == "complete_with_missing"
     assert result["missing"] == ["R3"]
     assert result["cups_commanded"] == ["C1"]
-    assert len([e for e in events if e[1] == "/advance"]) == 1
+    assert len([e for e in events if e[1] == "/return"]) == 1
 
 
-@pytest.mark.parametrize("path", ["/begin", "/detect", "/grasp_place", "/advance", "/return", "/end"])
-def test_any_step_failure_stops_both_no_retry(path):
+@pytest.mark.parametrize("path", ["/begin", "/detect", "/grasp_place", "/return", "/end"])
+def test_any_step_failure_stops_robot_no_retry(path):
     controller, events = make_controller(fail=path)
     with pytest.raises(RuntimeError, match="injected"):
         controller.run({"R3": 1, "C1": 1}, approved=True)
     paths = [e[1] for e in events]
     assert paths.count(path) == 1
-    assert set(paths[-2:]) == {"/estop", "/stop"}
+    assert paths[-1] == "/estop"
     if path == "/grasp_place":
-        assert "/advance" not in paths
-    if path == "/advance":
         assert "/return" not in paths
 
 
-def test_malformed_drop_never_advances_belt():
+def test_malformed_drop_halts_before_return():
     controller, events = make_controller()
     original = controller.pi.post
     def post(path, body):
@@ -79,7 +77,7 @@ def test_malformed_drop_never_advances_belt():
     controller.pi.post = post
     with pytest.raises(RuntimeError, match="ordered drop"):
         controller.run({"R3": 1}, approved=True)
-    assert "/advance" not in [e[1] for e in events]
+    assert "/return" not in [e[1] for e in events]
 
 
 def test_stop_is_latched_even_before_worker_starts():

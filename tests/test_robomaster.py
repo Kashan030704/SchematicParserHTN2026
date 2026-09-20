@@ -97,31 +97,31 @@ def test_preview_does_not_move_and_grasp_needs_approval(node):
     baseline = list(node.robot.commands)
     assert client.get("/detect").status_code == 200
     assert node.robot.commands == baseline
-    assert client.post("/grasp_place", json={"type": "R3", "run_id": "unknown"}).status_code == 409
+    assert client.post("/grasp_place", json={"type": "resistors", "run_id": "unknown"}).status_code == 409
     assert node.robot.commands == baseline
 
 
 def test_drop_return_split_and_duplicate_rejected(node):
     client = create_app(node).test_client()
-    assert client.post("/begin", json={"run_id": "r1", "types": ["R3"]}).status_code == 200
-    assert client.post("/grasp_place", json={"run_id": "r1", "type": "R3"}).status_code == 412
+    assert client.post("/begin", json={"run_id": "r1", "types": ["resistors"]}).status_code == 200
+    assert client.post("/grasp_place", json={"run_id": "r1", "type": "resistors"}).status_code == 412
     client.get("/detect")
-    result = client.post("/grasp_place", json={"run_id": "r1", "type": "R3"})
+    result = client.post("/grasp_place", json={"run_id": "r1", "type": "resistors"})
     assert result.status_code == 200
     assert result.json["steps"][-1] == {"op": "drop", "ok": True}
     assert node.state == "dropped"
     assert result.json["approach"]["tag_id"] == 0
     assert result.json["approach"]["aligned"] is True
     assert result.json["approach"]["steps"] > 0
-    # Visual approach + retrace precede the single preset conveyor leg.
-    assert node.robot.chassis_moves[-1] == node.robot.poses["conveyor_wp"]["chassis"]
+    # Visual approach + retrace precede the preset collection leg.
+    assert node.robot.chassis_moves[-1] == node.robot.poses["collection_wp"]["chassis"]
     assert client.get("/detect").status_code == 412
-    assert client.post("/return", json={"run_id": "r1", "type": "R3"}).status_code == 200
+    assert client.post("/return", json={"run_id": "r1", "type": "resistors"}).status_code == 200
     assert node.state == "observe"
     client.get("/detect")
-    assert client.post("/grasp_place", json={"run_id": "r1", "type": "R3"}).status_code == 409
+    assert client.post("/grasp_place", json={"run_id": "r1", "type": "resistors"}).status_code == 409
     assert client.post("/end", json={"run_id": "r1"}).status_code == 200
-    assert client.post("/begin", json={"run_id": "r1", "types": ["R3"]}).status_code == 409
+    assert client.post("/begin", json={"run_id": "r1", "types": ["resistors"]}).status_code == 409
 
 
 def test_detection_cannot_run_mid_motion_stop_bypasses_motion_lock(node):
@@ -130,10 +130,10 @@ def test_detection_cannot_run_mid_motion_stop_bypasses_motion_lock(node):
         entered.set()
         release.wait(2)
     node.robot.grasp = slow
-    node.begin("r", ["R3"])
+    node.begin("r", ["resistors"])
     node.detect()
     result = []
-    thread = threading.Thread(target=lambda: result.append(node.grasp_place("r", "R3")))
+    thread = threading.Thread(target=lambda: result.append(node.grasp_place("r", "resistors")))
     thread.start()
     assert entered.wait(1)
     commands_before_stop = list(node.robot.commands)
@@ -148,11 +148,11 @@ def test_detection_cannot_run_mid_motion_stop_bypasses_motion_lock(node):
 
 
 def test_stale_and_unknown_type_rejected(node):
-    node.begin("r", ["R3"])
+    node.begin("r", ["resistors"])
     node.detect()
     node.detected_at = time.monotonic() - 11
     client = create_app(node).test_client()
-    assert client.post("/grasp_place", json={"run_id": "r", "type": "R3"}).status_code == 412
+    assert client.post("/grasp_place", json={"run_id": "r", "type": "resistors"}).status_code == 412
     assert client.post("/grasp_place", json={"run_id": "r", "type": "wrong"}).status_code == 400
 
 
@@ -167,19 +167,19 @@ def test_image_apriltags_identification_and_pixel_features_only():
     import numpy as np
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
     canvas = np.full((300, 650), 255, dtype=np.uint8)
-    for x, tag in [(30, 0), (240, 0), (450, 2)]:
+    for x, tag in [(30, 0), (240, 0), (450, 8)]:
         canvas[70:230, x:x+160] = cv2.aruco.generateImageMarker(dictionary, tag, 160)
     class Camera:
         def read_cv2_image(self, **kwargs):
             assert kwargs["strategy"] == "newest"
             return canvas
-    result = Perception(Camera(), {0: "R3", 1: "C1", 2: "LED_RX"}).detect_once()
-    assert result["rollup"] == {"R3": {"count": 2, "present": True},
-                                 "LED_RX": {"count": 1, "present": True}}
+    result = Perception(Camera(), {0: "resistors", 2: "capacitors", 8: "diodes/LED"}).detect_once()
+    assert result["rollup"] == {"resistors": {"count": 2, "present": True},
+                                 "diodes/LED": {"count": 1, "present": True}}
     assert set(result) == {"ts", "rollup", "frame", "tags"}
     assert result["frame"]["width"] == 650
     assert len([t for t in result["tags"] if t["id"] == 0]) == 2
-    led = next(t for t in result["tags"] if t["id"] == 2)
+    led = next(t for t in result["tags"] if t["id"] == 8)
     assert led["center_px"] == pytest.approx([529.5, 149.5], abs=1)
     assert led["side_px"] == pytest.approx(159, abs=1)
     assert set(led) == {"id", "center_px", "side_px", "corners_px"}  # No world pose.
@@ -189,16 +189,16 @@ def test_empty_camera_is_error():
     class Camera:
         def read_cv2_image(self, **kwargs): return None
     with pytest.raises(RuntimeError, match="fresh"):
-        Perception(Camera(), {0: "R3"}).detect_once()
+        Perception(Camera(), {0: "resistors"}).detect_once()
 
 
 def test_camera_inspection_cannot_move_or_serve_motion(poses):
     robot = Robot(poses, dry_run=True, read_only=True, emit=lambda text: None)
     robot.connect()
     with pytest.raises(MotionError, match="read-only"):
-        robot.grasp("R3")
+        robot.grasp("resistors")
     with pytest.raises(MotionError, match="read-only"):
-        robot.to_conveyor()
+        robot.to_collection()
     with pytest.raises(ValueError, match="inspection"):
-        RobotNode(robot, DryRunPerception({0: "R3"}, robot), {0: "R3"})
+        RobotNode(robot, DryRunPerception({0: "resistors"}, robot), {0: "resistors"})
     assert robot.commands == ["command;", "robot mode free;"]

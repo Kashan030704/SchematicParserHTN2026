@@ -1,4 +1,4 @@
-# HCP architecture and project handoff
+# Schematic to Fetch architecture and project handoff
 
 This document describes the repository as implemented, not just the desired demo.
 Use [README.md](../README.md) for commands and [protocol.md](protocol.md) for payloads.
@@ -7,10 +7,8 @@ Use [README.md](../README.md) for commands and [protocol.md](protocol.md) for pa
 
 A Mac reads an electronics schematic through Baseten, presents a proposed bill of materials
 beside the Pi's camera detections, and waits for a human to edit and approve it. It then
-coordinates two independent HTTP nodes:
-
-- a Raspberry Pi controlling a **DJI RoboMaster EP** arm, gripper and chassis over USB/RNDIS;
-- a networked Arduino controlling a DC-motor conveyor through a motor driver.
+commands one Raspberry Pi HTTP node controlling a **DJI RoboMaster EP** arm, gripper
+and chassis over USB/RNDIS. Cups are delivered to a fixed collection point.
 
 The plan is one-shot: fulfill each approved component type once, in order. The robot transports
 one representative labeled **cup per type**. Required quantities are displayed; the robot
@@ -25,21 +23,19 @@ physical tag size, world-coordinate tag pose, IK, or LLM-controlled visual steer
 
 Implemented and exercised without hardware:
 
-- real Baseten request path and strict BOM validation, with a mocked model in automated tests;
+- real Baseten extraction, vision review and seven-group classification, with mocked models in automated tests;
 - editable approval UI, sequential controller, no automatic physical command retries;
 - Pi HTTP state machine and EP plaintext motion adapter;
 - AprilTag pixel-feature extraction on synthetic images;
 - bounded terminal visual controller and explicit simulation of convergence;
-- conveyor **HTTP simulator**, including interruptible advance and stop;
 - subprocess dry-run and actual localhost HTTP/TCP integration tests.
 
 Not established by those tests:
 
-- successful live Baseten extraction against the changed schema/model deployment;
-- EP USB networking, plaintext firmware behavior, live H.264 decoding or response timing;
+- reliable extraction/review across arbitrary schematics; a live synthetic upload has passed;
+- EP USB networking, plaintext command behavior, live H.264 decoding or response timing;
 - visual-controller gains/signs/tolerances on the physical mounting;
-- any successful physical grip, cup transport, belt placement or delivery;
-- Arduino firmware/wiring: board and motor driver are still unknown and deliberately deferred.
+- any successful physical grip, cup transport, placement or delivery;
 
 Do not treat software test success as a completed physical demonstration.
 
@@ -48,19 +44,17 @@ Do not treat software test success as a completed physical demonstration.
 | Component | Process/location | Connection |
 | --- | --- | --- |
 | Browser | Mac browser | Mac Flask UI at loopback port 5002 |
-| Ingestion/controller | Mac, `python -m ui.app` | HTTPS to Baseten; HTTP to two nodes |
+| Ingestion/controller | Mac, `python -m ui.app` | HTTPS to Baseten; HTTP to the robot node |
 | Robot node | Pi, `python -m actuator.main` | HTTP on port 8081 by example |
 | EP control | RoboMaster EP | Pi → EP TCP 40923 over USB/RNDIS |
 | EP video | RoboMaster EP | Pi receives H.264 TCP 40921 |
-| Conveyor node | Networked Arduino, future firmware | Mac → Arduino HTTP, configured URL |
-| Conveyor simulation | `python -m actuator.conveyor_node` | Same HTTP contract, example port 8082 |
 
 The Pi's Wi-Fi address is what the Mac uses. The EP's USB/RNDIS address is what the Pi uses.
 They are different interfaces and addresses. USB does not require the Mac to join the EP's
 access point: Mac and Pi can stay on an internet-connected LAN.
 
-The Pi never tells the Arduino to run. The **Mac** waits for robot drop completion, commands
-the belt, waits for belt completion, then authorizes the robot's return.
+The **Mac** waits for the robot's successful drop log and immediately authorizes its return
+from the collection point to observe.
 
 HTTP is the deployed HCP transport in this version. The repository's earlier NDJSON TCP
 discovery/codegen implementation is retained only as a reference compatibility library.
@@ -74,10 +68,10 @@ Do not launch its port-9000 host for this workflow.
 images and are sent together in one vision call. `bom_schema.json` now describes:
 
 ```json
-{"R3": 2, "C1": 1, "LED_RX": 3}
+{"resistors": 2, "capacitors": 1, "diodes/LED": 3}
 ```
 
-Keys are the exact cup/type vocabulary, not physical coordinates. Values are positive
+Execution keys are the exact registered group vocabulary, not physical coordinates. Values are positive
 integer quantities. Malformed JSON, duplicate keys, invalid quantities and nonfinite values
 are rejected. The proposal still requires human review: valid JSON does not mean the
 schematic was interpreted correctly.
@@ -87,43 +81,76 @@ The execution contract is the flat object above, not the old
 shape must be converted before submission.
 
 The incoming frontend's PDF/JPEG/PNG/BMP/TIFF uploads are retained. `sch.py` additionally
-parses legacy KiCad and EAGLE XML `.sch` locally, without Baseten credentials. It keeps
-rich component records as review-only metadata and converts them to the flat execution
-BOM: exact `type:value` matches take priority; otherwise all reference labels in a group
-must match configured cups. Unmapped labels remain visible and require a human edit before
-approval. Hierarchical designs and modern `.kicad_sch` files are rejected, not partly read.
+parses legacy KiCad and EAGLE XML `.sch` locally. It keeps rich component records and the
+original flat BOM. Hierarchical designs and modern `.kicad_sch` files are rejected, not partly read.
+
+`classification.py` defines a strict source-to-group assignment schema. With the default
+seven-group catalog, extracted PDF/image/SCH components and raw manual JSON are classified
+by the configured model. Each original label must appear exactly once with a registered
+group, confidence and reason. Local code sums the original quantities and attaches IDs
+from `tag_map.yaml`; the model cannot choose counts or tag IDs. Unusual components receive
+the closest group with low confidence. Ambiguous matches also appear in the review UI.
+Explicit manual JSON already naming registered groups needs no model call.
+
+Classification failures preserve the original BOM for manual correction, with no automatic
+retry. Unknown labels cannot pass approval. For legacy tag maps without group definitions,
+the earlier exact-label mapping remains available, including offline SCH parsing.
 
 ### `orchestrator/`
 
-- `baseten_client.py`: existing transport, simplified to one structured-output vision call.
+- `baseten_client.py`: structured-output BOM extraction, separate advisory vision review,
+  and component classification. PDF/image proposals normally use three calls; SCH/raw JSON
+  uses one classification call. All use the configured vision model.
   Endpoint/model are configurable; key is read from an environment-variable name.
   There is no fake fallback if Baseten fails, and no automatic 429 retry.
 - `ingest.py`: small wrapper connecting the UI to existing ingestion.
+- `commands.py`: optional one-call language intent parser with capability descriptions
+  and strict local validation. Fetch/current-BOM requests only create/show
+  confirmation proposals; status/detection are read-only; stop is latched. Exact stop
+  phrases bypass the model. An explicitly selected `demo` grammar works without an API
+  call and never substitutes for a failed Baseten request.
 - `schematic_advice.py`: preserved frontend feature with deterministic component rules.
-  These are advisory checks, not another LLM call or a netlist/electrical-safety review.
+  These supplement the separate PDF/image vision review in `baseten_client.py`, validated
+  by `ingestion/review.py`. Vision findings include evidence, damage consequences, suggested
+  checks, and conditional parts-only CAD estimates. Unknown costs remain null. Review
+  failure leaves successful BOM extraction available; edited BOMs mark the review stale.
+  Local component checks also work for SCH/manual input without a model call.
   They never alter the approved BOM, dispatch commands or trigger replanning.
-- `nodes.py`: common HTTP JSON client for both Pi and belt. Bounded response sizes, explicit
+- `nodes.py`: HTTP JSON client for the RoboMaster Pi. Bounded response sizes, explicit
   timeouts, no redirects, no ambient proxy for LAN requests, no command retries.
 - `controller.py`: freezes the approved BOM, starts a run, and dispatches the sequential
-  robot/belt calls. Missing cups are reported and skipped. Other errors halt and request
-  both stops concurrently.
+  robot calls. Missing cups are reported and skipped. Other errors halt and request
+  a robot stop.
 
-There is no ongoing LLM agent choosing arbitrary motor commands. Baseten proposes what is
-needed; the approved deterministic controller chooses the fixed operation sequence.
-Visual corrections are the Pi executor's responsibility.
+There is no ongoing LLM agent choosing arbitrary motor commands. The vision model proposes
+parts; an optional separate command model interprets text/voice requests into one permitted
+intent. Neither model has approval authority. The deterministic controller chooses the
+fixed operation sequence; visual corrections are the Pi executor's responsibility.
 
 ### `ui/`
 
 `app.py` provides the browser, upload/parse endpoint, preview, explicit approval, progress
 polling and stop. `static/index.html`, `app.js`, and `style.css` implement the front end.
 The incoming light-themed layout, requested-parts list, schematic suggestions and progress
-cards are integrated with this gate, not the retired palette backend. Source SCH records
-remain available for review. Node health polling is read-only; simulated nodes are labeled.
+cards are integrated with this gate, not the retired palette backend. Source SCH records,
+raw extraction JSON, and per-component group/tag/confidence/reasons remain available for review.
+Editing grouped totals marks classification and schematic review as stale; it does not
+overwrite the source mapping. Node health polling is read-only; simulated nodes are labeled.
 Flat BOM insertion order survives proposal serialization and becomes the approved pick order.
 `static/bg3d.js` adds the incoming scroll-reactive circuit board, bokeh, LED satellites
 and grid. Its pinned, MIT-licensed Three.js dependency is served from `static/vendor/`,
 keeping the same-origin script policy intact. It never reads or writes run state;
 no WebGL means a plain background, and reduced-motion settings disable animation.
+
+`static/commands.js` adds an isolated optional text/push-to-talk panel. Browser speech
+recognition (not Baseten STT) requires explicit microphone consent and may use a remote
+browser-provider service. Recognized final text takes the same `/commands` path as typing;
+exact recognized stops use the existing `/stop` path. Transcripts never approve motion.
+Unsupported speech/permission failure leaves the original UI and typed input intact.
+The microphone is not always-on, no background restart occurs, and a physical stop remains necessary.
+
+All UI proposals are `fulfillment` requests with an editable BOM. Text/voice requests
+use the same approval gate as uploads and manual BOMs.
 
 Before approval, upload and detection do not cause arm/chassis movement. The robot must already
 be positioned at observe. Approval contains the edited BOM and `approved: true`; duplicate
@@ -150,18 +177,21 @@ database, production deployment server, or durable job queue.
 - `approach.py`: selects exactly one requested tag, takes a configured coarse route,
   performs bounded image-space corrections, gates the grip, and retraces successful
   approach translations. It does not change the BOM, substitute tags, or replan.
-- `conveyor_node.py`: Python **simulator only**. It cannot drive a real conveyor.
 
 ### Configuration and entry points
 
-- `tag_map.yaml`: AprilTag ID → type, e.g. 0 → R3. Unique ID per type.
-- `poses.yaml`: dummy arm targets, chassis belt/return legs, tag-indexed coarse routes,
+- `tag_map.yaml`: tag36h11 IDs 0 → resistors, 2 → capacitors, 6 → integrated circuits,
+  7 → motors, 1 → inductors, 5 → custom printed circuit boards, 8 → diodes/LED.
+  Group descriptions and the closest-group policy also live here. Unique ID per group.
+- `poses.yaml`: dummy arm targets, chassis collection/return legs, tag-indexed coarse routes,
   visual setpoint, control directions, time/travel/step caps and dwell settings.
   `calibrated: false` and `visual_approach.taught: false` block hardware.
-- `config.yaml`: Mac node URLs, conveyor duration, Baseten endpoint/model/key-env name.
+- `config.yaml`: Mac robot-node URL and Baseten endpoint/model/key-env name.
+- `config.demo.yaml`: an explicit local robot-node URL and demo command grammar for prototype testing.
+  Always check node health says simulated; command mode alone does not simulate hardware.
 - `config/__init__.py`: YAML parsing and validation, including duplicate-key rejection.
 - `main.py`/`cli.py`: offline `run --bom ... --dry-run` acceptance entry point. It exercises
-  both HTTP contracts in-process and prints commands; it cannot enable real hardware.
+  the robot HTTP contract in-process and prints commands; it cannot enable real hardware.
 - `sample_bom.json`: manual fixture for offline tests, not the ingestion implementation.
 - `requirements-backend.txt`: Mac.
 - `requirements-pi.txt`: Pi, including OpenCV and PyAV, without the legacy DJI Python package.
@@ -170,12 +200,8 @@ database, production deployment server, or durable job queue.
 Use ignored `config.local.yaml`, `poses.local.yaml`, and optionally `tag_map.local.yaml`
 for event settings. Environment variables/secrets are not committed and `.env` is not
 automatically loaded.
-
-### `firmware/`
-
-Only the new hardware contract/checklist is present in `README.md`.
-The old serial servo firmware was deleted. There is **no finished networked DC-conveyor
-sketch** until the actual board/driver/pins are confirmed.
+`BASETEN_VISION_MODEL` and optional `BASETEN_COMMAND_MODEL` are separate. A missing command
+model does not break uploads/manual proposals. No audio model is required for browser STT.
 
 ### `hcp_sdk/` and `hcp_host/`
 
@@ -183,7 +209,7 @@ The unchanged reference node schema, JSON-to-client generator, framed TCP runtim
 and host remain regression-tested compatibility/reference infrastructure. The live HTTP node
 code uses `hcp_host/http.py` for shared request/authentication conventions.
 
-The old deployable arm/camera/conveyor/palette node definitions and loader were removed so
+The old deployable arm/camera/palette node definitions and loader were removed so
 they cannot be mistaken for the new robot deployment. Generated `out/` files are ignored;
 old files left there are not active code and should not be launched.
 
@@ -191,7 +217,7 @@ old files left there are not active code and should not be launched.
 
 Tests cover model request shape, schema rejection, approval, command ordering, tag image
 features, visual convergence/failures, stop behavior, socket framing, reference codegen and
-actual HTTP between simulated nodes.
+actual HTTP to the simulated robot.
 
 Documentation covers the current architecture and API. Historical `ours.md`, `theirs.md`
 and the previous simulation screenshot are retained as project material, not current setup
@@ -199,10 +225,10 @@ instructions. User-local ignored hardware files have not been erased.
 
 ## 4. Exactly what the robot does
 
-For an approved entry `"R3": 2`, with tag_map binding R3 to ID 0:
+For an approved entry `"resistors": 2`, with tag_map binding resistors to ID 0:
 
 1. The Mac starts a run with the approved types.
-2. The Mac asks for a fresh detection at observe. An absent R3 cup is flagged and skipped.
+2. The Mac asks for a fresh detection at observe. An absent resistors cup is flagged and skipped.
 3. The Mac sends `/grasp_place` with the same run ID and type.
 4. The Pi marks this type attempted, preventing replay.
 5. The Pi commands the observe/carry arm pose. It takes another fresh observation of tag 0.
@@ -217,14 +243,13 @@ For an approved entry `"R3": 2`, with tag_map binding R3 to ID 0:
    observe/carry. There is no grip-success sensor.
 9. With the cup held, it reverses the successful approach translations in reverse order.
    This returns to the **commanded estimate** of the starting observe station.
-10. It drives the configured observe-to-conveyor leg.
-11. It moves to the drop pose, opens the gripper, then retracts to clear the belt.
-12. The Pi returns the successful grasp/drive/drop log. It remains at the conveyor station.
-13. The Mac commands the separate conveyor node to advance for N seconds and waits for OFF/ok.
-14. Only then does the Mac request `/return`; the robot drives its configured return leg
+10. It drives the configured `collection_wp` leg from observe to the collection point.
+11. It moves to the drop pose, opens the gripper, then retracts to clear the collection point.
+12. The Pi returns the successful grasp/drive/drop log.
+13. The Mac immediately requests `/return`; the robot drives its configured return leg
     and commands observe. The next type may now begin.
 
-Quantity 2 remains display information. Exactly one R3 cup is commanded.
+Quantity 2 remains display information. Exactly one resistors cup is commanded.
 
 A successful command is not a measured physical success. The application reports
 `physical_delivery_verified: false` even after the run completes.
@@ -259,8 +284,9 @@ legs and 1 m cumulative commanded travel; yaw changes are disallowed in approach
 retraced translation math remains valid.
 
 The original “no feedback anywhere” wording is now superseded **only for terminal approach**.
-Coarse travel, grip, approach retrace, conveyor travel/drop, belt and home remain open-loop.
-The system does not sense obstacles, cup contents, grip force, delivery success or belt occupancy.
+Coarse travel, grip, approach retrace, collection travel/drop and home remain open-loop.
+The system does not sense obstacles, cup contents, grip force, delivery success or collection-point occupancy.
+The drop target is fixed: verify that the collection area stays clear for each cup.
 
 ## 6. Failure behavior
 
@@ -282,8 +308,7 @@ No blind search, tag substitution, fixed-position fallback, auto-regrip, replann
 automatic recovery drive is performed. In particular, a failed approach does **not**
 trigger the successful-path retrace.
 
-The Pi sends `quit;` and disconnects on stop. The Mac requests Pi stop and conveyor stop
-concurrently. This is best-effort network/software safety, not a certified emergency-stop
+The Pi sends `quit;` and disconnects on stop. The Mac requests Pi `/estop`. This is best-effort network/software safety, not a certified emergency-stop
 circuit. A wedged process, broken link or failed power stage can defeat software stop.
 A supervisor and accessible physical power/stop controls are required.
 
@@ -295,25 +320,18 @@ Real stream latency must be checked during slow-speed bring-up.
 
 | Area | Still needed | Why |
 | --- | --- | --- |
-| Robot | Confirm EP with working arm/gripper, firmware, USB data connection | S1 is not the specified manipulator |
+| Robot | Confirm EP with working arm/gripper and USB data connection | S1 is not the specified manipulator |
 | Pi | Hostname/SSH access, OS/Python, Wi-Fi IP, USB/RNDIS interface/endpoint | Separate LAN and robot connections |
 | Camera | Live stream works; fixed gimbal orientation; fresh detection latency | Image corrections must correspond to the current view |
-| Tags/cups | Final type↔ID list, consistent tag print size/mounting and cup appendages | Same image target must mean the same grasp arrangement |
+| Tags/cups | Registered seven-group IDs, consistent tag print size/mounting and cup appendages | Same image target must mean the same grasp arrangement |
 | Visual target | Target center/side in pixels; tolerances; signs; tested step speed | No metric calibration, but a graspable image target is essential |
 | Arm | Observe/carry, common grab, drop poses; force and dwells | Templates are zeros and must never be treated as safe |
 | Coarse paths | Relative translation legs per tag, or deliberate empty routes | Bring tags into the terminal controller's limited capture region |
-| Conveyor route | Observe-to-belt and belt-to-observe legs, clearances | Belt drop is still a fixed open-loop waypoint |
-| Floor/layout | Clear paths, belt fixed in place, acceptable repeatability/drift | No obstacle or belt-alignment sensing |
-| Arduino | Exact networked board or network shield | Determines libraries, voltage levels and firmware target |
-| Motor system | Driver model, motor/supply ratings, PWM/direction/standby pins | Determines control code and electrical wiring |
-| Network | Pi/Arduino URLs, trusted LAN, shared node token | Both independent nodes must be reachable/authenticated |
-| Baseten | Current API key, vision slug, structured-output support/quota | No guessed slug and no live provider verification yet |
+| Collection route | Observe-to-collection and return legs, clearances | Drop is a fixed open-loop waypoint |
+| Floor/layout | Clear paths and collection point, acceptable repeatability/drift | No obstacle or collection-occupancy sensing |
+| Network | Pi URL, trusted LAN, shared node token | Robot node must be reachable/authenticated |
+| Baseten | Current API key, vision slug, structured-output support/quota | Validate against the current provider deployment and your schematics |
 | Safety | Physical stops, supervisor, safe initial state and one-cup test procedure | Software acknowledgement does not establish physical safety |
-
-Arduino hardware selection was explicitly deferred. Return to it when the board/driver
-labels or photographs are available; do not guess a firmware pinout in the meantime.
-The conveyor motor needs its own suitable power supply and the appropriate common ground
-with the controller/driver, never motor power from logic GPIO.
 
 ## 8. Bring-up order from here
 
@@ -325,12 +343,12 @@ python -m pytest -q
 python -m main run --bom sample_bom.json --dry-run
 ```
 
-Expect three type-level cycles, visible ALIGN corrections, then belt/return ordering.
+Expect three type-level cycles, visible ALIGN corrections, then drop/return ordering.
 The simulator's image response is intentionally simple; it is not evidence of real dynamics.
 
-### B. Test real ingestion with simulated nodes
+### B. Test real ingestion with the simulated robot
 
-Run the Pi and belt simulators in separate terminals, configure local node URLs, set
+Run the Pi simulator, configure its local node URL, set
 Baseten key/model in the Mac backend environment, and launch the browser UI. Upload your
 schematic, correct the BOM and approve. Verify nothing happens before approval.
 
@@ -354,15 +372,8 @@ and carry/drop clearance. Then mark the configuration taught/verified and start 
 HTTP node from the actual observe station.
 
 Start with one cup. Confirm tag-loss and stop behavior before trusting a longer run.
-Keep the belt simulator until the physical conveyor has been independently tested.
 
-### E. Complete the Arduino once hardware is known
-
-Implement its /advance, /stop, auth and health contract; validate boot-OFF, finite maximum
-duration, local auto-stop deadline, stop responsiveness during advance, and disconnect
-behavior. Test the motor on the bench before letting the robot place a cup on it.
-
-### F. Integrate one real cup, then repeated cycles
+### E. Integrate one real cup, then repeated cycles
 
 First demonstrate one complete approved cycle. Then test multiple types and repeated
 round trips. Measure misses/drift manually: the current software cannot verify delivery.
@@ -373,10 +384,10 @@ Only claim the physical demo complete after repeated successful observed runs.
 Compared with the earlier custom-arm repository:
 
 - removed SG90/PCA9685 hardware drivers, custom arm/IK/serial paths, old palette runtime,
-  tuning CLI, servo firmware, world-pose camera runtime and obsolete orchestration/demo layers;
-- replaced the active deployment with Mac approval/controller + Pi RoboMaster + separate belt HTTP;
+  tuning CLI, world-pose camera runtime and obsolete orchestration/demo layers;
+- replaced the active deployment with Mac approval/controller + Pi RoboMaster HTTP;
 - kept real ingestion, changed its output to the new editable type→quantity BOM;
-- split drop completion from robot return so the Mac can place belt advance between them;
+- validate drop completion before immediately requesting return to observe;
 - added local image-based terminal approach without changing top-level BOM/run commands;
 - added fault latching, fresh/unique tag checks, bounded corrections, no-motion inspection,
   simulation and integration coverage;

@@ -119,13 +119,13 @@ class Robot:
         self.gripper("close")
         self.observe()  # Calibrate this as a carry-safe lift, with the jaws still closed.
 
-    def to_conveyor(self):
-        self.chassis_move(self.poses["conveyor_wp"])
+    def to_collection(self):
+        self.chassis_move(self.poses["collection_wp"])
 
     def drop(self):
         self.arm_moveto(self.poses["drop_pose"])
         self.gripper("open")
-        self.observe()  # Clear the belt before acknowledging drop.
+        self.observe()  # Clear the collection point before acknowledging drop.
 
     def to_home(self):
         self.chassis_move(self.poses["home_wp"])
